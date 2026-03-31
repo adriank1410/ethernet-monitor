@@ -52,7 +52,7 @@ fi
 
 # Verify — check that the daemon is actually running (not just registered)
 sleep 2
-daemon_pid=$(launchctl print "system/$LABEL" 2>/dev/null | awk '/pid =/ { print $3 }')
+daemon_pid=$( (launchctl print "system/$LABEL" 2>/dev/null || true) | awk '/pid =/ { print $3 }')
 if [[ -n "$daemon_pid" && "$daemon_pid" != "0" ]]; then
     echo "Installed and started (PID $daemon_pid)."
     echo "  Script: $DEST_BIN"

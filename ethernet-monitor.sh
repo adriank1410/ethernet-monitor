@@ -309,9 +309,7 @@ while true; do
 
         iface_output=$(get_iface_status)
         if [[ -z "$iface_output" ]]; then
-            # Adapter disappeared during self-heal wait — don't attempt recovery
-            adapter_was_present=false
-            first_link_up=false
+            # Adapter disappeared during self-heal wait — let next iteration handle it
             continue
         fi
         if [[ "$iface_output" == *"status: active"* ]]; then
