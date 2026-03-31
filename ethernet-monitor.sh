@@ -16,6 +16,8 @@
 
 setopt nounset  # error on undefined variables
 
+zmodload zsh/datetime  # $EPOCHSECONDS and strftime builtins (avoids forking date)
+
 # --- Config ----------------------------------------------------------------
 readonly IFACE="en6"
 readonly SERVICE="USB 10/100/1000 LAN"
@@ -35,6 +37,7 @@ export PATH="/usr/sbin:/sbin:/usr/bin:/bin"
 # Override with ETHMON_LANG=pl or ETHMON_LANG=en in the plist EnvironmentVariables,
 # otherwise auto-detect from console user's system language.
 if [[ -z "${ETHMON_LANG:-}" ]]; then
+    # Same awk pattern as get_console_uid() — defined later, can't call yet at parse time
     console_uid=$(scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null | awk '/CGSSessionUniqueSessionUUID/ { next } /^[[:space:]]*UID[[:space:]]*:/ { print $3 }' 2>/dev/null)
     ETHMON_LANG=""
     if [[ -n "${console_uid:-}" && "$console_uid" != "0" ]]; then
@@ -80,7 +83,7 @@ fi
 # --- Helpers ----------------------------------------------------------------
 log_msg() {
     local ts
-    ts=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || ts="UNKNOWN_TIME"
+    strftime -s ts '%Y-%m-%d %H:%M:%S' "$EPOCHSECONDS" 2>/dev/null || ts="UNKNOWN_TIME"
     if ! printf '%s  %s\n' "$ts" "$1" >> "$LOG" 2>/dev/null; then
         printf '%s  LOG_WRITE_FAILED: %s\n' "$ts" "$1" >&2
     fi
@@ -98,16 +101,16 @@ rotate_log() {
     fi
 }
 
-get_console_user() {
-    scutil <<< "show State:/Users/ConsoleUser" | awk '/Name :/ { print $3 }' 2>/dev/null
+get_console_uid() {
+    scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null \
+        | awk '/CGSSessionUniqueSessionUUID/ { next } /^[[:space:]]*UID[[:space:]]*:/ { print $3 }'
 }
 
 notify() {
     local msg="$1" sound="${2:-Glass}"
-    local console_user console_uid
-    console_user=$(get_console_user) || return
-    [[ -z "$console_user" || "$console_user" == "loginwindow" ]] && return
-    console_uid=$(id -u "$console_user" 2>/dev/null) || return
+    local console_uid
+    console_uid=$(get_console_uid) || return
+    [[ -z "$console_uid" || "$console_uid" == "0" ]] && return
 
     local output
     output=$(launchctl asuser "$console_uid" /usr/bin/osascript - "$msg" "$sound" <<'APPLESCRIPT' 2>&1
@@ -134,7 +137,7 @@ interruptible_sleep() {
 # --- Recovery (escalating) --------------------------------------------------
 attempt_recovery() {
     local now
-    now=$(date +%s 2>/dev/null) || now=0
+    now=$EPOCHSECONDS
 
     # Respect cooldown to prevent recovery loops
     if (( now > 0 && last_recovery_at > 0 && now - last_recovery_at < RECOVERY_COOLDOWN )); then
@@ -210,7 +213,7 @@ while true; do
     fi
 
     # Detect wake from sleep via timestamp gap
-    now_poll=$(date +%s 2>/dev/null) || now_poll=0
+    now_poll=$EPOCHSECONDS
     if (( now_poll > 0 && last_poll_at > 0 && now_poll - last_poll_at > WAKE_THRESHOLD )); then
         log_msg "[WAKE] System resumed after $(( now_poll - last_poll_at ))s sleep"
         adapter_was_present=false

@@ -17,7 +17,7 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-# Stop existing daemon if running (try both APIs)
+# Stop existing daemon if running (try both APIs independently)
 launchctl bootout "system/$LABEL" 2>/dev/null || true
 launchctl unload "$DEST_PLIST" 2>/dev/null || true
 
