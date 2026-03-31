@@ -68,6 +68,8 @@ if [[ -n "$daemon_pid" && "$daemon_pid" != "0" && "$daemon_pid" != "-" ]]; then
     echo "  tail -f /var/log/ethernet-monitor.log   # watch log"
     echo "  sudo ./uninstall.sh                     # remove"
 else
-    echo "WARNING: Daemon failed to start. Check: sudo launchctl print system/$LABEL"
+    echo "WARNING: Daemon failed to start."
+    echo "  Debug: sudo launchctl print system/$LABEL"
+    echo "  Legacy: sudo launchctl list | grep $LABEL"
     exit 1
 fi
