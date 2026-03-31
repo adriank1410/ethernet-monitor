@@ -77,6 +77,9 @@ last_poll_at=0
 now_poll=0
 first_link_up=true
 boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*sec = \([0-9]*\).*/\1/p') || boot_sec=0
+if ! [[ "$boot_sec" =~ ^[0-9]+$ ]]; then
+    boot_sec=0
+fi
 
 # --- Helpers ----------------------------------------------------------------
 log_msg() {

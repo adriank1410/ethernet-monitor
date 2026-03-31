@@ -2,7 +2,7 @@
 
 Auto-recovery LaunchDaemon for USB Ethernet adapters on macOS.
 
-Works with any USB Ethernet adapter that appears as a standard network interface. Created to solve random link drops on Realtek RTL8153 (common in USB-C docks/adapters), but compatible with any chipset — it monitors the interface, not the driver.
+Works with any USB Ethernet adapter that appears as a standard network interface **after configuring `IFACE`/`SERVICE` in `ethernet-monitor.sh`**. Created to solve random link drops on Realtek RTL8153 (common in USB-C docks/adapters), but compatible with any chipset — it monitors the interface, not the driver.
 
 ## Problem
 
