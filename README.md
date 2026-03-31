@@ -95,7 +95,7 @@ Then reinstall with `sudo ./install.sh`.
 |---|---|
 | `ethernet-monitor.sh` | `/Library/PrivilegedHelperTools/ethernet-monitor` |
 | `com.local.ethernet-monitor.plist` | `/Library/LaunchDaemons/` |
-| `com.local.ethernet-monitor.newsyslog.conf` | `/etc/newsyslog.d/` |
+| `com.local.ethernet-monitor.newsyslog.conf` | `/etc/newsyslog.d/com.local.ethernet-monitor.conf` |
 
 The script is installed to `/Library/PrivilegedHelperTools/` (root-only, not user-writable) to prevent local privilege escalation.
 

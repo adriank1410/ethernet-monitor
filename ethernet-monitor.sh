@@ -29,7 +29,7 @@ readonly ROTATION_CHECK_INTERVAL=100  # check log size every N iterations (~5 mi
 readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was sleeping
 readonly BOOT_GRACE=120               # delay first link-up notification for never-seen adapter until uptime exceeds this (s)
 
-export PATH="/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin"
+export PATH="/usr/sbin:/sbin:/usr/bin:/bin"
 
 # --- Localization (PL/EN) ---------------------------------------------------
 # Override with ETHMON_LANG=pl or ETHMON_LANG=en in the plist EnvironmentVariables,
