@@ -1,16 +1,18 @@
 # ethernet-monitor
 
-Auto-recovery LaunchDaemon for USB Ethernet (Realtek RTL8153) on macOS.
+Auto-recovery LaunchDaemon for USB Ethernet adapters on macOS.
+
+Works with any USB Ethernet adapter that appears as a standard network interface **after configuring `IFACE`/`SERVICE` in `ethernet-monitor.sh`**. Created to solve random link drops on Realtek RTL8153 (common in USB-C docks/adapters), but compatible with any chipset — it monitors the interface, not the driver.
 
 ## Problem
 
-MacBook + USB-C adapter with Realtek RTL8153 Ethernet — the link randomly drops while the adapter stays connected. The only fix is unplugging and replugging the adapter.
+MacBook + USB-C adapter with Ethernet — the link randomly drops while the adapter stays connected. The only fix is unplugging and replugging the adapter.
 
 ## What this does
 
 A lightweight daemon (~1.5 MB RAM, 0% CPU) that polls the `en6` interface every 3 seconds and:
 
-1. **Detects link drops** — adapter present but no Ethernet link
+1. **Detects link drops** — adapter present but no Ethernet link (including intentional cable unplugs — the daemon assumes the cable should always be connected; it gives up after 2 failed recovery attempts)
 2. **Waits 10s for self-heal** — transient blips resolve themselves
 3. **Escalating recovery** — `ifconfig down/up`, then `networksetup` service toggle
 4. **Gives up after 2 failures** — no notification spam, resets on adapter replug
@@ -71,6 +73,7 @@ Edit `ethernet-monitor.sh` — constants at the top:
 | `RECOVERY_COOLDOWN` | `30` | Min seconds between recovery attempts |
 | `MAX_RECOVERY_ATTEMPTS` | `2` | Give up after N failed recoveries |
 | `WAKE_THRESHOLD` | `60` | Time gap (s) that indicates system sleep |
+| `BOOT_GRACE` | `120` | Suppress first notification if adapter never seen and uptime < this |
 
 ### Force notification language
 
@@ -90,10 +93,15 @@ Then reinstall with `sudo ./install.sh`.
 
 | File | Installed to |
 |---|---|
-| `ethernet-monitor.sh` | `/usr/local/bin/ethernet-monitor` |
+| `ethernet-monitor.sh` | `/Library/PrivilegedHelperTools/ethernet-monitor` |
 | `com.local.ethernet-monitor.plist` | `/Library/LaunchDaemons/` |
+| `com.local.ethernet-monitor.newsyslog.conf` | `/etc/newsyslog.d/com.local.ethernet-monitor.conf` |
 
-Logs: `/var/log/ethernet-monitor.log` (auto-rotated at 1 MB)
+The script is installed to `/Library/PrivilegedHelperTools/` (root-only, not user-writable) to prevent local privilege escalation.
+
+Logs:
+- `/var/log/ethernet-monitor.log` — main log (auto-rotated at 1 MB by the daemon)
+- `/var/log/ethernet-monitor.err` — stderr (rotated by newsyslog at 1 MB, 1 backup)
 
 ## License
 

@@ -9,17 +9,14 @@
 #   3. networksetup service toggle
 #   4. Notify user to physically replug (then stop retrying)
 #
-# Install:
-#   sudo cp ethernet-monitor /usr/local/bin/
-#   sudo chmod +x /usr/local/bin/ethernet-monitor
-#   sudo cp com.local.ethernet-monitor.plist /Library/LaunchDaemons/
-#   sudo launchctl bootstrap system /Library/LaunchDaemons/com.local.ethernet-monitor.plist
+# Install:   sudo ./install.sh
+# Uninstall: sudo ./uninstall.sh
 #
-# Uninstall:
-#   sudo launchctl bootout system/com.local.ethernet-monitor
-#   sudo rm /usr/local/bin/ethernet-monitor /Library/LaunchDaemons/com.local.ethernet-monitor.plist
+# Installed to /Library/PrivilegedHelperTools/ethernet-monitor (root-only directory).
 
 setopt nounset  # error on undefined variables
+
+zmodload zsh/datetime  # $EPOCHSECONDS and strftime builtins (avoids forking date)
 
 # --- Config ----------------------------------------------------------------
 readonly IFACE="en6"
@@ -32,14 +29,16 @@ readonly MAX_RECOVERY_ATTEMPTS=2   # give up after this many failed recoveries
 readonly MAX_LOG_BYTES=1048576     # rotate log at 1 MB
 readonly ROTATION_CHECK_INTERVAL=100  # check log size every N iterations (~5 min)
 readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was sleeping
+readonly BOOT_GRACE=120               # delay first link-up notification for never-seen adapter until uptime exceeds this (s)
 
-export PATH="/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin"
+export PATH="/usr/sbin:/sbin:/usr/bin:/bin"
 
 # --- Localization (PL/EN) ---------------------------------------------------
 # Override with ETHMON_LANG=pl or ETHMON_LANG=en in the plist EnvironmentVariables,
 # otherwise auto-detect from console user's system language.
 if [[ -z "${ETHMON_LANG:-}" ]]; then
-    console_uid=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/UID/ { print $3 }' 2>/dev/null)
+    # Same awk pattern as get_console_uid() — defined later, can't call yet at parse time
+    console_uid=$(scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null | awk '/CGSSessionUniqueSessionUUID/ { next } /^[[:space:]]*UID[[:space:]]*:/ { print $3 }' 2>/dev/null)
     ETHMON_LANG=""
     if [[ -n "${console_uid:-}" && "$console_uid" != "0" ]]; then
         ETHMON_LANG=$(launchctl asuser "$console_uid" defaults read -g AppleLanguages 2>/dev/null \
@@ -75,11 +74,16 @@ iface_output=""
 last_poll_at=0
 now_poll=0
 first_link_up=true
+boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*{ sec = \([0-9]*\).*/\1/p') || boot_sec=0
+# Ensure boot_sec is numeric; default to 0 if empty/non-numeric
+if [[ -z "$boot_sec" || ! "$boot_sec" =~ '^[0-9]+$' ]]; then
+    boot_sec=0
+fi
 
 # --- Helpers ----------------------------------------------------------------
 log_msg() {
     local ts
-    ts=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || ts="UNKNOWN_TIME"
+    strftime -s ts '%Y-%m-%d %H:%M:%S' "$EPOCHSECONDS" 2>/dev/null || ts="UNKNOWN_TIME"
     if ! printf '%s  %s\n' "$ts" "$1" >> "$LOG" 2>/dev/null; then
         printf '%s  LOG_WRITE_FAILED: %s\n' "$ts" "$1" >&2
     fi
@@ -97,16 +101,16 @@ rotate_log() {
     fi
 }
 
-get_console_user() {
-    scutil <<< "show State:/Users/ConsoleUser" | awk '/Name :/ { print $3 }' 2>/dev/null
+get_console_uid() {
+    scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null \
+        | awk '/CGSSessionUniqueSessionUUID/ { next } /^[[:space:]]*UID[[:space:]]*:/ { print $3 }'
 }
 
 notify() {
     local msg="$1" sound="${2:-Glass}"
-    local console_user console_uid
-    console_user=$(get_console_user) || return
-    [[ -z "$console_user" || "$console_user" == "loginwindow" ]] && return
-    console_uid=$(id -u "$console_user" 2>/dev/null) || return
+    local console_uid
+    console_uid=$(get_console_uid) || return
+    [[ -z "$console_uid" || "$console_uid" == "0" ]] && return
 
     local output
     output=$(launchctl asuser "$console_uid" /usr/bin/osascript - "$msg" "$sound" <<'APPLESCRIPT' 2>&1
@@ -133,7 +137,7 @@ interruptible_sleep() {
 # --- Recovery (escalating) --------------------------------------------------
 attempt_recovery() {
     local now
-    now=$(date +%s 2>/dev/null) || now=0
+    now=$EPOCHSECONDS
 
     # Respect cooldown to prevent recovery loops
     if (( now > 0 && last_recovery_at > 0 && now - last_recovery_at < RECOVERY_COOLDOWN )); then
@@ -196,9 +200,9 @@ trap cleanup SIGTERM SIGINT
 # --- Startup validation -----------------------------------------------------
 log_msg "Monitor started (PID $$, interface $IFACE, poll ${CHECK_INTERVAL}s)"
 
-if ! networksetup -listallnetworkservices 2>/dev/null | grep -qF "$SERVICE"; then
+if ! networksetup -listallnetworkservices 2>/dev/null | tail -n +2 | sed 's/^\* //' | grep -xqF "$SERVICE"; then
     log_msg "[ERROR] Network service '$SERVICE' not found. Recovery step 2 will fail."
-    log_msg "[ERROR] Available: $(networksetup -listallnetworkservices 2>/dev/null | tail -n +2 | tr '\n' ', ')"
+    log_msg "[ERROR] Available: $(networksetup -listallnetworkservices 2>/dev/null | tail -n +2 | sed 's/^\* //' | tr '\n' ', ')"
 fi
 
 # --- Main loop --------------------------------------------------------------
@@ -209,7 +213,7 @@ while true; do
     fi
 
     # Detect wake from sleep via timestamp gap
-    now_poll=$(date +%s 2>/dev/null) || now_poll=0
+    now_poll=$EPOCHSECONDS
     if (( now_poll > 0 && last_poll_at > 0 && now_poll - last_poll_at > WAKE_THRESHOLD )); then
         log_msg "[WAKE] System resumed after $(( now_poll - last_poll_at ))s sleep"
         adapter_was_present=false
@@ -227,6 +231,10 @@ while true; do
             adapter_was_present=false
             link_was_active=false
             recovery_failures=0
+            first_link_up=false
+        elif (( now_poll > 0 && boot_sec > 0 && now_poll - boot_sec > BOOT_GRACE )); then
+            # System uptime beyond BOOT_GRACE without ever seeing adapter — not early boot
+            first_link_up=false
         fi
         sleep "$CHECK_INTERVAL"
         continue
