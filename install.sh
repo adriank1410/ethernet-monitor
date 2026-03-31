@@ -26,6 +26,9 @@ if [[ -f "$OLD_BIN" ]]; then
     rm -f "$OLD_BIN"
 fi
 
+# Ensure target directories exist
+mkdir -p "$(dirname "$DEST_BIN")" "$(dirname "$DEST_NEWSYSLOG")"
+
 # Install to root-only directory (not user-writable /usr/local/bin)
 cp "$SCRIPT_DIR/ethernet-monitor.sh" "$DEST_BIN"
 chown root:wheel "$DEST_BIN"
