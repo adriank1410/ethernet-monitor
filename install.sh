@@ -19,12 +19,13 @@ fi
 launchctl bootout "system/$LABEL" 2>/dev/null || true
 launchctl unload "$DEST_PLIST" 2>/dev/null || true
 
-# Install files
+# Install files (owned by root to prevent local privilege escalation)
 cp "$SCRIPT_DIR/ethernet-monitor.sh" "$DEST_BIN"
-chmod +x "$DEST_BIN"
+chown root:wheel "$DEST_BIN"
+chmod 755 "$DEST_BIN"
 cp "$SCRIPT_DIR/com.local.ethernet-monitor.plist" "$DEST_PLIST"
-chmod 644 "$DEST_PLIST"
 chown root:wheel "$DEST_PLIST"
+chmod 644 "$DEST_PLIST"
 
 # Start daemon (try modern API first, fall back to legacy)
 bootstrap_err=""

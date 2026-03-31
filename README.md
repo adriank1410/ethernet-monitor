@@ -12,7 +12,7 @@ MacBook + USB-C adapter with Ethernet — the link randomly drops while the adap
 
 A lightweight daemon (~1.5 MB RAM, 0% CPU) that polls the `en6` interface every 3 seconds and:
 
-1. **Detects link drops** — adapter present but no Ethernet link
+1. **Detects link drops** — adapter present but no Ethernet link (including intentional cable unplugs — the daemon assumes the cable should always be connected; it gives up after 2 failed recovery attempts)
 2. **Waits 10s for self-heal** — transient blips resolve themselves
 3. **Escalating recovery** — `ifconfig down/up`, then `networksetup` service toggle
 4. **Gives up after 2 failures** — no notification spam, resets on adapter replug
@@ -96,7 +96,9 @@ Then reinstall with `sudo ./install.sh`.
 | `ethernet-monitor.sh` | `/usr/local/bin/ethernet-monitor` |
 | `com.local.ethernet-monitor.plist` | `/Library/LaunchDaemons/` |
 
-Logs: `/var/log/ethernet-monitor.log` (auto-rotated at 1 MB)
+Logs:
+- `/var/log/ethernet-monitor.log` — main log (auto-rotated at 1 MB)
+- `/var/log/ethernet-monitor.err` — stderr, only written on critical failures (not rotated, should stay small)
 
 ## License
 

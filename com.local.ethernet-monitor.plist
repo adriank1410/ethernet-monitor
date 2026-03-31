@@ -13,7 +13,7 @@
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/var/log/ethernet-monitor.out</string>
+    <string>/dev/null</string>
     <key>StandardErrorPath</key>
     <string>/var/log/ethernet-monitor.err</string>
     <key>ThrottleInterval</key>
