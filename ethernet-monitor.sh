@@ -39,7 +39,7 @@ export PATH="/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin"
 # Override with ETHMON_LANG=pl or ETHMON_LANG=en in the plist EnvironmentVariables,
 # otherwise auto-detect from console user's system language.
 if [[ -z "${ETHMON_LANG:-}" ]]; then
-    console_uid=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/UID/ { print $3 }' 2>/dev/null)
+    console_uid=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/^  UID :/ { print $3 }' 2>/dev/null)
     ETHMON_LANG=""
     if [[ -n "${console_uid:-}" && "$console_uid" != "0" ]]; then
         ETHMON_LANG=$(launchctl asuser "$console_uid" defaults read -g AppleLanguages 2>/dev/null \
@@ -228,6 +228,8 @@ while true; do
             link_was_active=false
             recovery_failures=0
         fi
+        # If adapter was absent at any point, next plug-in should notify
+        first_link_up=false
         sleep "$CHECK_INTERVAL"
         continue
     fi

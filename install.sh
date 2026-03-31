@@ -15,9 +15,9 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-# Stop existing daemon if running
-launchctl unload "$DEST_PLIST" 2>/dev/null || true
+# Stop existing daemon if running (try both APIs)
 launchctl bootout "system/$LABEL" 2>/dev/null || true
+launchctl unload "$DEST_PLIST" 2>/dev/null || true
 
 # Install files
 cp "$SCRIPT_DIR/ethernet-monitor.sh" "$DEST_BIN"
@@ -26,8 +26,10 @@ cp "$SCRIPT_DIR/com.local.ethernet-monitor.plist" "$DEST_PLIST"
 chmod 644 "$DEST_PLIST"
 chown root:wheel "$DEST_PLIST"
 
-# Start daemon
-launchctl load "$DEST_PLIST"
+# Start daemon (try both APIs — one will succeed)
+launchctl bootstrap system "$DEST_PLIST" 2>/dev/null \
+    || launchctl load "$DEST_PLIST" 2>/dev/null \
+    || true
 
 # Verify
 sleep 2
