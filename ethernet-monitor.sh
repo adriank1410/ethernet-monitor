@@ -35,6 +35,24 @@ readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was s
 
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin"
 
+# --- Localization (PL/EN) ---------------------------------------------------
+sys_lang=$(defaults read -g AppleLanguages 2>/dev/null | sed -n 's/.*"\(.*\)".*/\1/p' | head -1)
+if [[ "$sys_lang" == pl* ]]; then
+    readonly MSG_LINK_DOWN="Ethernet link padł — czekam na auto-recovery..."
+    readonly MSG_SELF_HEALED="Ethernet wrócił sam"
+    readonly MSG_RECOVERED_IFCONFIG="Ethernet wrócił (ifconfig reset)"
+    readonly MSG_RECOVERED_NETSETUP="Ethernet wrócił (service reset)"
+    readonly MSG_GAVE_UP="Ethernet nie wrócił — wyjmij i włóż przejściówkę"
+    readonly MSG_CONNECTED="Ethernet podłączony"
+else
+    readonly MSG_LINK_DOWN="Ethernet link dropped — attempting auto-recovery..."
+    readonly MSG_SELF_HEALED="Ethernet recovered on its own"
+    readonly MSG_RECOVERED_IFCONFIG="Ethernet restored (ifconfig reset)"
+    readonly MSG_RECOVERED_NETSETUP="Ethernet restored (service reset)"
+    readonly MSG_GAVE_UP="Ethernet not restored — replug the adapter"
+    readonly MSG_CONNECTED="Ethernet connected"
+fi
+
 # --- State ------------------------------------------------------------------
 link_was_active=false
 adapter_was_present=false
@@ -124,7 +142,7 @@ attempt_recovery() {
     status_output=$(get_iface_status)
     if [[ "$status_output" == *"status: active"* ]]; then
         log_msg "[RECOVERED] ifconfig reset worked"
-        notify "Ethernet wrócił (ifconfig reset)" "Glass"
+        notify "$MSG_RECOVERED_IFCONFIG" "Glass"
         recovery_failures=0
         return 0
     fi
@@ -141,7 +159,7 @@ attempt_recovery() {
     status_output=$(get_iface_status)
     if [[ "$status_output" == *"status: active"* ]]; then
         log_msg "[RECOVERED] networksetup toggle worked"
-        notify "Ethernet wrócił (service reset)" "Glass"
+        notify "$MSG_RECOVERED_NETSETUP" "Glass"
         recovery_failures=0
         return 0
     fi
@@ -149,7 +167,7 @@ attempt_recovery() {
     (( recovery_failures++ ))
     if (( recovery_failures >= MAX_RECOVERY_ATTEMPTS )); then
         log_msg "[GAVE UP] Auto-recovery failed ${MAX_RECOVERY_ATTEMPTS}x — stopping retries until link or adapter changes"
-        notify "Ethernet nie wrócił — wyjmij i włóż przejściówkę" "Basso"
+        notify "$MSG_GAVE_UP" "Basso"
     else
         log_msg "[FAILED] Recovery attempt $recovery_failures/$MAX_RECOVERY_ATTEMPTS failed"
     fi
@@ -225,7 +243,7 @@ while true; do
             if [[ "$first_link_up" == true ]]; then
                 first_link_up=false
             else
-                notify "Ethernet podłączony" "Glass"
+                notify "$MSG_CONNECTED" "Glass"
             fi
             link_was_active=true
             recovery_failures=0
@@ -245,7 +263,7 @@ while true; do
     if [[ "$link_was_active" == true ]]; then
         # Fresh drop — wait for self-heal first
         log_msg "[LINK DOWN] $IFACE inactive (waiting ${SELF_HEAL_WAIT}s for self-heal)"
-        notify "Ethernet link padł — czekam na auto-recovery..." "Purr"
+        notify "$MSG_LINK_DOWN" "Purr"
         link_was_active=false
 
         interruptible_sleep "$SELF_HEAL_WAIT"
@@ -253,7 +271,7 @@ while true; do
         iface_output=$(get_iface_status)
         if [[ -n "$iface_output" && "$iface_output" == *"status: active"* ]]; then
             log_msg "[SELF-HEALED] Link wrócił sam po ${SELF_HEAL_WAIT}s"
-            notify "Ethernet wrócił sam" "Glass"
+            notify "$MSG_SELF_HEALED" "Glass"
             link_was_active=true
             recovery_failures=0
             continue
