@@ -21,13 +21,14 @@ if zmodload zsh/datetime 2>/dev/null; then
     _has_zsh_datetime=true
 else
     typeset -g EPOCHSECONDS
-    EPOCHSECONDS=$(date +%s)
+    EPOCHSECONDS=$(/bin/date +%s 2>/dev/null || echo 0)
 fi
 
-# In fallback mode, EPOCHSECONDS doesn't auto-update — call this before reading it
+# In fallback mode, EPOCHSECONDS doesn't auto-update — call this before reading it.
+# No-op when zsh/datetime is loaded (EPOCHSECONDS auto-updates).
 refresh_epoch() {
     if [[ "$_has_zsh_datetime" == false ]]; then
-        EPOCHSECONDS=$(date +%s)
+        EPOCHSECONDS=$(/bin/date +%s 2>/dev/null || echo 0)
     fi
 }
 
@@ -96,8 +97,9 @@ fi
 # --- Helpers ----------------------------------------------------------------
 log_msg() {
     local ts
+    refresh_epoch
     strftime -s ts '%Y-%m-%d %H:%M:%S' "$EPOCHSECONDS" 2>/dev/null \
-        || ts=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) \
+        || ts=$(/bin/date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) \
         || ts="UNKNOWN_TIME"
     if ! printf '%s  %s\n' "$ts" "$1" >> "$LOG" 2>/dev/null; then
         printf '%s  LOG_WRITE_FAILED: %s\n' "$ts" "$1" >&2
