@@ -229,8 +229,9 @@ while true; do
             link_was_active=false
             recovery_failures=0
             first_link_up=false
-        elif (( now_poll > 0 && startup_at > 0 && now_poll - startup_at > SELF_HEAL_WAIT )); then
-            # Daemon running for >10s without ever seeing adapter — not early boot
+        elif (( now_poll > 0 && startup_at > 0 && now_poll - startup_at > WAKE_THRESHOLD )); then
+            # Daemon running for >60s without ever seeing adapter — clearly not early boot.
+            # Uses WAKE_THRESHOLD (60s) to avoid false positive on slow boots.
             first_link_up=false
         fi
         sleep "$CHECK_INTERVAL"
