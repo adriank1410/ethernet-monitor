@@ -16,6 +16,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # Stop existing daemon if running
+launchctl unload "$DEST_PLIST" 2>/dev/null || true
 launchctl bootout "system/$LABEL" 2>/dev/null || true
 
 # Install files
@@ -28,11 +29,18 @@ chown root:wheel "$DEST_PLIST"
 # Start daemon
 launchctl load "$DEST_PLIST"
 
-echo "Installed and started."
-echo "  Script: $DEST_BIN"
-echo "  Plist:  $DEST_PLIST"
-echo "  Log:    /var/log/ethernet-monitor.log"
-echo ""
-echo "Commands:"
-echo "  tail -f /var/log/ethernet-monitor.log   # watch log"
-echo "  sudo ./uninstall.sh                     # remove"
+# Verify
+sleep 2
+if launchctl list "$LABEL" >/dev/null 2>&1; then
+    echo "Installed and started."
+    echo "  Script: $DEST_BIN"
+    echo "  Plist:  $DEST_PLIST"
+    echo "  Log:    /var/log/ethernet-monitor.log"
+    echo ""
+    echo "Commands:"
+    echo "  tail -f /var/log/ethernet-monitor.log   # watch log"
+    echo "  sudo ./uninstall.sh                     # remove"
+else
+    echo "WARNING: Daemon failed to start. Check: sudo launchctl list $LABEL"
+    exit 1
+fi

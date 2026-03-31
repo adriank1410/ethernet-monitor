@@ -14,7 +14,9 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-launchctl bootout "system/$LABEL" 2>/dev/null || true
+launchctl bootout "system/$LABEL" 2>/dev/null \
+    || launchctl unload "$DEST_PLIST" 2>/dev/null \
+    || true
 rm -f "$DEST_BIN" "$DEST_PLIST"
 
 echo "Uninstalled. Log files remain in /var/log/ethernet-monitor.*"
