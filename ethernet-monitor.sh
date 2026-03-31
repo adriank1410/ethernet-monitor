@@ -76,7 +76,7 @@ iface_output=""
 last_poll_at=0
 now_poll=0
 first_link_up=true
-boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*sec = \([0-9]*\).*/\1/p') || boot_sec=0
+boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*{ sec = \([0-9]*\).*/\1/p') || boot_sec=0
 # Ensure boot_sec is numeric; default to 0 if parsing yielded empty/non-numeric
 if ! [[ $boot_sec == <-> ]]; then
     boot_sec=0
