@@ -52,8 +52,13 @@ fi
 
 # Verify — check that the daemon is actually running (not just registered)
 sleep 2
+# Try modern API first, fall back to legacy for older macOS
 daemon_pid=$( (launchctl print "system/$LABEL" 2>/dev/null || true) | awk '/pid =/ { print $3 }')
-if [[ -n "$daemon_pid" && "$daemon_pid" != "0" ]]; then
+if [[ -z "$daemon_pid" || "$daemon_pid" == "0" ]]; then
+    # Fallback: launchctl list (legacy) — returns PID as first field
+    daemon_pid=$(launchctl list "$LABEL" 2>/dev/null | awk 'NR==2 { print $1 }')
+fi
+if [[ -n "$daemon_pid" && "$daemon_pid" != "0" && "$daemon_pid" != "-" ]]; then
     echo "Installed and started (PID $daemon_pid)."
     echo "  Script: $DEST_BIN"
     echo "  Plist:  $DEST_PLIST"
