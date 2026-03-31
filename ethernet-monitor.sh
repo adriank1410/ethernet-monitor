@@ -235,7 +235,7 @@ while true; do
             recovery_failures=0
             first_link_up=false
         elif (( now_poll > 0 && boot_sec > 0 && now_poll - boot_sec > BOOT_GRACE )); then
-            # System uptime > 120s without ever seeing adapter — not early boot
+            # System uptime beyond BOOT_GRACE without ever seeing adapter — not early boot
             first_link_up=false
         fi
         sleep "$CHECK_INTERVAL"
