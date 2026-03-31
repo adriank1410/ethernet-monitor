@@ -39,7 +39,7 @@ export PATH="/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin"
 # Override with ETHMON_LANG=pl or ETHMON_LANG=en in the plist EnvironmentVariables,
 # otherwise auto-detect from console user's system language.
 if [[ -z "${ETHMON_LANG:-}" ]]; then
-    console_uid=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/^  UID :/ { print $3 }' 2>/dev/null)
+    console_uid=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/CGSSessionUniqueSessionUUID/ { next } /^[[:space:]]*UID[[:space:]]*:/ { print $3 }' 2>/dev/null)
     ETHMON_LANG=""
     if [[ -n "${console_uid:-}" && "$console_uid" != "0" ]]; then
         ETHMON_LANG=$(launchctl asuser "$console_uid" defaults read -g AppleLanguages 2>/dev/null \
@@ -75,6 +75,7 @@ iface_output=""
 last_poll_at=0
 now_poll=0
 first_link_up=true
+startup_at=$(date +%s 2>/dev/null) || startup_at=0
 
 # --- Helpers ----------------------------------------------------------------
 log_msg() {
@@ -227,9 +228,11 @@ while true; do
             adapter_was_present=false
             link_was_active=false
             recovery_failures=0
+            first_link_up=false
+        elif (( now_poll > 0 && startup_at > 0 && now_poll - startup_at > SELF_HEAL_WAIT )); then
+            # Daemon running for >10s without ever seeing adapter — not early boot
+            first_link_up=false
         fi
-        # If adapter was absent at any point, next plug-in should notify
-        first_link_up=false
         sleep "$CHECK_INTERVAL"
         continue
     fi

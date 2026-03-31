@@ -26,10 +26,13 @@ cp "$SCRIPT_DIR/com.local.ethernet-monitor.plist" "$DEST_PLIST"
 chmod 644 "$DEST_PLIST"
 chown root:wheel "$DEST_PLIST"
 
-# Start daemon (try both APIs — one will succeed)
-launchctl bootstrap system "$DEST_PLIST" 2>/dev/null \
-    || launchctl load "$DEST_PLIST" 2>/dev/null \
-    || true
+# Start daemon (try modern API first, fall back to legacy)
+load_err=""
+if ! load_err=$(launchctl bootstrap system "$DEST_PLIST" 2>&1); then
+    if ! load_err=$(launchctl load "$DEST_PLIST" 2>&1); then
+        echo "WARNING: launchctl failed: $load_err"
+    fi
+fi
 
 # Verify
 sleep 2
