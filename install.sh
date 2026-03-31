@@ -56,7 +56,7 @@ sleep 2
 daemon_pid=$( (launchctl print "system/$LABEL" 2>/dev/null || true) | awk '/pid =/ { print $3 }')
 if [[ -z "$daemon_pid" || "$daemon_pid" == "0" ]]; then
     # Fallback: launchctl list (legacy) — returns PID as first field
-    daemon_pid=$(launchctl list "$LABEL" 2>/dev/null | awk 'NR==2 { print $1 }')
+    daemon_pid=$( (launchctl list "$LABEL" 2>/dev/null || true) | awk -v label="$LABEL" '$3 == label { print $1; exit }')
 fi
 if [[ -n "$daemon_pid" && "$daemon_pid" != "0" && "$daemon_pid" != "-" ]]; then
     echo "Installed and started (PID $daemon_pid)."
