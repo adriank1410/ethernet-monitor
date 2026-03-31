@@ -32,6 +32,7 @@ readonly MAX_RECOVERY_ATTEMPTS=2   # give up after this many failed recoveries
 readonly MAX_LOG_BYTES=1048576     # rotate log at 1 MB
 readonly ROTATION_CHECK_INTERVAL=100  # check log size every N iterations (~5 min)
 readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was sleeping
+readonly BOOT_GRACE=120               # suppress first notification if system uptime < this (s)
 
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin"
 
@@ -75,7 +76,7 @@ iface_output=""
 last_poll_at=0
 now_poll=0
 first_link_up=true
-startup_at=$(date +%s 2>/dev/null) || startup_at=0
+boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*sec = \([0-9]*\).*/\1/p') || boot_sec=0
 
 # --- Helpers ----------------------------------------------------------------
 log_msg() {
@@ -229,9 +230,8 @@ while true; do
             link_was_active=false
             recovery_failures=0
             first_link_up=false
-        elif (( now_poll > 0 && startup_at > 0 && now_poll - startup_at > WAKE_THRESHOLD )); then
-            # Daemon running for >60s without ever seeing adapter — clearly not early boot.
-            # Uses WAKE_THRESHOLD (60s) to avoid false positive on slow boots.
+        elif (( now_poll > 0 && boot_sec > 0 && now_poll - boot_sec > BOOT_GRACE )); then
+            # System uptime > 120s without ever seeing adapter — not early boot
             first_link_up=false
         fi
         sleep "$CHECK_INTERVAL"

@@ -27,10 +27,12 @@ chmod 644 "$DEST_PLIST"
 chown root:wheel "$DEST_PLIST"
 
 # Start daemon (try modern API first, fall back to legacy)
+bootstrap_err=""
 load_err=""
-if ! load_err=$(launchctl bootstrap system "$DEST_PLIST" 2>&1); then
+if ! bootstrap_err=$(launchctl bootstrap system "$DEST_PLIST" 2>&1); then
     if ! load_err=$(launchctl load "$DEST_PLIST" 2>&1); then
-        echo "WARNING: launchctl failed: $load_err"
+        echo "WARNING: launchctl bootstrap failed: $bootstrap_err"
+        echo "WARNING: launchctl load failed: $load_err"
     fi
 fi
 
