@@ -16,9 +16,8 @@
 
 setopt nounset  # error on undefined variables
 
-zmodload zsh/datetime 2>/dev/null  # $EPOCHSECONDS and strftime builtins (avoids forking date)
 _has_zsh_datetime=false
-if (( ${+EPOCHSECONDS} )); then
+if zmodload zsh/datetime 2>/dev/null; then
     _has_zsh_datetime=true
 else
     typeset -g EPOCHSECONDS
