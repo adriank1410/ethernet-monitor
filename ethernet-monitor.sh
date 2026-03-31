@@ -32,7 +32,7 @@ readonly MAX_RECOVERY_ATTEMPTS=2   # give up after this many failed recoveries
 readonly MAX_LOG_BYTES=1048576     # rotate log at 1 MB
 readonly ROTATION_CHECK_INTERVAL=100  # check log size every N iterations (~5 min)
 readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was sleeping
-readonly BOOT_GRACE=120               # suppress first notification if system uptime < this (s)
+readonly BOOT_GRACE=120               # delay first link-up notification for never-seen adapter until uptime exceeds this (s)
 
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin"
 
@@ -40,7 +40,7 @@ export PATH="/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin"
 # Override with ETHMON_LANG=pl or ETHMON_LANG=en in the plist EnvironmentVariables,
 # otherwise auto-detect from console user's system language.
 if [[ -z "${ETHMON_LANG:-}" ]]; then
-    console_uid=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/CGSSessionUniqueSessionUUID/ { next } /^[[:space:]]*UID[[:space:]]*:/ { print $3 }' 2>/dev/null)
+    console_uid=$(scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null | awk '/CGSSessionUniqueSessionUUID/ { next } /^[[:space:]]*UID[[:space:]]*:/ { print $3 }' 2>/dev/null)
     ETHMON_LANG=""
     if [[ -n "${console_uid:-}" && "$console_uid" != "0" ]]; then
         ETHMON_LANG=$(launchctl asuser "$console_uid" defaults read -g AppleLanguages 2>/dev/null \

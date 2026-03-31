@@ -38,7 +38,7 @@ fi
 
 # Verify
 sleep 2
-if launchctl list "$LABEL" >/dev/null 2>&1; then
+if launchctl print "system/$LABEL" >/dev/null 2>&1 || launchctl list "$LABEL" >/dev/null 2>&1; then
     echo "Installed and started."
     echo "  Script: $DEST_BIN"
     echo "  Plist:  $DEST_PLIST"

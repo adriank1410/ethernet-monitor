@@ -73,6 +73,7 @@ Edit `ethernet-monitor.sh` — constants at the top:
 | `RECOVERY_COOLDOWN` | `30` | Min seconds between recovery attempts |
 | `MAX_RECOVERY_ATTEMPTS` | `2` | Give up after N failed recoveries |
 | `WAKE_THRESHOLD` | `60` | Time gap (s) that indicates system sleep |
+| `BOOT_GRACE` | `120` | Suppress first notification if adapter never seen and uptime < this |
 
 ### Force notification language
 
