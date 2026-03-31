@@ -36,7 +36,16 @@ readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was s
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin"
 
 # --- Localization (PL/EN) ---------------------------------------------------
-sys_lang=$(defaults read -g AppleLanguages 2>/dev/null | sed -n 's/.*"\(.*\)".*/\1/p' | head -1)
+# Read language from the console user's preferences (not root's)
+console_uid=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/UID/ { print $3 }' 2>/dev/null)
+sys_lang=""
+if [[ -n "${console_uid:-}" && "$console_uid" != "0" ]]; then
+    sys_lang=$(launchctl asuser "$console_uid" defaults read -g AppleLanguages 2>/dev/null \
+        | sed -n 's/.*"\(.*\)".*/\1/p' | head -1)
+fi
+if [[ -z "${sys_lang:-}" ]]; then
+    sys_lang=$(defaults read -g AppleLanguages 2>/dev/null | sed -n 's/.*"\(.*\)".*/\1/p' | head -1)
+fi
 if [[ "$sys_lang" == pl* ]]; then
     readonly MSG_LINK_DOWN="Ethernet link padł — czekam na auto-recovery..."
     readonly MSG_SELF_HEALED="Ethernet wrócił sam"
