@@ -5,8 +5,10 @@
 
 set -euo pipefail
 
-DEST_BIN="/usr/local/bin/ethernet-monitor"
+DEST_BIN="/Library/PrivilegedHelperTools/ethernet-monitor"
+OLD_BIN="/usr/local/bin/ethernet-monitor"
 DEST_PLIST="/Library/LaunchDaemons/com.local.ethernet-monitor.plist"
+DEST_NEWSYSLOG="/etc/newsyslog.d/com.local.ethernet-monitor.conf"
 LABEL="com.local.ethernet-monitor"
 
 if [[ $EUID -ne 0 ]]; then
@@ -17,6 +19,6 @@ fi
 launchctl bootout "system/$LABEL" 2>/dev/null \
     || launchctl unload "$DEST_PLIST" 2>/dev/null \
     || true
-rm -f "$DEST_BIN" "$DEST_PLIST"
+rm -f "$DEST_BIN" "$OLD_BIN" "$DEST_PLIST" "$DEST_NEWSYSLOG"
 
 echo "Uninstalled. Log files remain in /var/log/ethernet-monitor.*"

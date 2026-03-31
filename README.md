@@ -93,12 +93,15 @@ Then reinstall with `sudo ./install.sh`.
 
 | File | Installed to |
 |---|---|
-| `ethernet-monitor.sh` | `/usr/local/bin/ethernet-monitor` |
+| `ethernet-monitor.sh` | `/Library/PrivilegedHelperTools/ethernet-monitor` |
 | `com.local.ethernet-monitor.plist` | `/Library/LaunchDaemons/` |
+| `com.local.ethernet-monitor.newsyslog.conf` | `/etc/newsyslog.d/` |
+
+The script is installed to `/Library/PrivilegedHelperTools/` (root-only, not user-writable) to prevent local privilege escalation.
 
 Logs:
-- `/var/log/ethernet-monitor.log` — main log (auto-rotated at 1 MB)
-- `/var/log/ethernet-monitor.err` — stderr, only written on critical failures (not rotated, should stay small)
+- `/var/log/ethernet-monitor.log` — main log (auto-rotated at 1 MB by the daemon)
+- `/var/log/ethernet-monitor.err` — stderr (rotated by newsyslog at 1 MB, 1 backup)
 
 ## License
 

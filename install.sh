@@ -6,8 +6,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="${0:A:h}"
-DEST_BIN="/usr/local/bin/ethernet-monitor"
+DEST_BIN="/Library/PrivilegedHelperTools/ethernet-monitor"
+OLD_BIN="/usr/local/bin/ethernet-monitor"
 DEST_PLIST="/Library/LaunchDaemons/com.local.ethernet-monitor.plist"
+DEST_NEWSYSLOG="/etc/newsyslog.d/com.local.ethernet-monitor.conf"
 LABEL="com.local.ethernet-monitor"
 
 if [[ $EUID -ne 0 ]]; then
@@ -19,13 +21,21 @@ fi
 launchctl bootout "system/$LABEL" 2>/dev/null || true
 launchctl unload "$DEST_PLIST" 2>/dev/null || true
 
-# Install files (owned by root to prevent local privilege escalation)
+# Clean up old install location if present
+if [[ -f "$OLD_BIN" ]]; then
+    rm -f "$OLD_BIN"
+fi
+
+# Install to root-only directory (not user-writable /usr/local/bin)
 cp "$SCRIPT_DIR/ethernet-monitor.sh" "$DEST_BIN"
 chown root:wheel "$DEST_BIN"
 chmod 755 "$DEST_BIN"
 cp "$SCRIPT_DIR/com.local.ethernet-monitor.plist" "$DEST_PLIST"
 chown root:wheel "$DEST_PLIST"
 chmod 644 "$DEST_PLIST"
+cp "$SCRIPT_DIR/com.local.ethernet-monitor.newsyslog.conf" "$DEST_NEWSYSLOG"
+chown root:wheel "$DEST_NEWSYSLOG"
+chmod 644 "$DEST_NEWSYSLOG"
 
 # Start daemon (try modern API first, fall back to legacy)
 bootstrap_err=""

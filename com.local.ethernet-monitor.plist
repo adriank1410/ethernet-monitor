@@ -6,7 +6,7 @@
     <string>com.local.ethernet-monitor</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/ethernet-monitor</string>
+        <string>/Library/PrivilegedHelperTools/ethernet-monitor</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

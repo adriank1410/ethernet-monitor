@@ -9,15 +9,10 @@
 #   3. networksetup service toggle
 #   4. Notify user to physically replug (then stop retrying)
 #
-# Install:
-#   sudo cp ethernet-monitor /usr/local/bin/
-#   sudo chmod +x /usr/local/bin/ethernet-monitor
-#   sudo cp com.local.ethernet-monitor.plist /Library/LaunchDaemons/
-#   sudo launchctl bootstrap system /Library/LaunchDaemons/com.local.ethernet-monitor.plist
+# Install:   sudo ./install.sh
+# Uninstall: sudo ./uninstall.sh
 #
-# Uninstall:
-#   sudo launchctl bootout system/com.local.ethernet-monitor
-#   sudo rm /usr/local/bin/ethernet-monitor /Library/LaunchDaemons/com.local.ethernet-monitor.plist
+# Installed to /Library/PrivilegedHelperTools/ethernet-monitor (root-only directory).
 
 setopt nounset  # error on undefined variables
 
