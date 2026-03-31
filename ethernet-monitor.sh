@@ -282,7 +282,7 @@ while true; do
 
         iface_output=$(get_iface_status)
         if [[ -n "$iface_output" && "$iface_output" == *"status: active"* ]]; then
-            log_msg "[SELF-HEALED] Link wrócił sam po ${SELF_HEAL_WAIT}s"
+            log_msg "[SELF-HEALED] Link recovered on its own after ${SELF_HEAL_WAIT}s"
             notify "$MSG_SELF_HEALED" "Glass"
             link_was_active=true
             recovery_failures=0
