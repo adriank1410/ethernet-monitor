@@ -308,7 +308,13 @@ while true; do
         interruptible_sleep "$SELF_HEAL_WAIT"
 
         iface_output=$(get_iface_status)
-        if [[ -n "$iface_output" && "$iface_output" == *"status: active"* ]]; then
+        if [[ -z "$iface_output" ]]; then
+            # Adapter disappeared during self-heal wait — don't attempt recovery
+            adapter_was_present=false
+            first_link_up=false
+            continue
+        fi
+        if [[ "$iface_output" == *"status: active"* ]]; then
             log_msg "[SELF-HEALED] Link recovered on its own after ${SELF_HEAL_WAIT}s"
             notify "$MSG_SELF_HEALED" "Glass"
             link_was_active=true
@@ -317,7 +323,7 @@ while true; do
         fi
     fi
 
-    # Still down — attempt recovery (cooldown-protected)
+    # Still down, adapter still present — attempt recovery (cooldown-protected)
     if attempt_recovery; then
         link_was_active=true
     fi

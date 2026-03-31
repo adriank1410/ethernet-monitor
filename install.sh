@@ -50,10 +50,11 @@ if ! bootstrap_err=$(launchctl bootstrap system "$DEST_PLIST" 2>&1); then
     fi
 fi
 
-# Verify
+# Verify — check that the daemon is actually running (not just registered)
 sleep 2
-if launchctl print "system/$LABEL" >/dev/null 2>&1 || launchctl list "$LABEL" >/dev/null 2>&1; then
-    echo "Installed and started."
+daemon_pid=$(launchctl print "system/$LABEL" 2>/dev/null | awk '/pid =/ { print $3 }')
+if [[ -n "$daemon_pid" && "$daemon_pid" != "0" ]]; then
+    echo "Installed and started (PID $daemon_pid)."
     echo "  Script: $DEST_BIN"
     echo "  Plist:  $DEST_PLIST"
     echo "  Log:    /var/log/ethernet-monitor.log"
