@@ -16,7 +16,21 @@
 
 setopt nounset  # error on undefined variables
 
-zmodload zsh/datetime  # $EPOCHSECONDS and strftime builtins (avoids forking date)
+_has_zsh_datetime=false
+if zmodload zsh/datetime 2>/dev/null; then
+    _has_zsh_datetime=true
+else
+    typeset -g EPOCHSECONDS
+    EPOCHSECONDS=$(/bin/date +%s 2>/dev/null || echo 0)
+fi
+
+# In fallback mode, EPOCHSECONDS doesn't auto-update — call this before reading it.
+# No-op when zsh/datetime is loaded (EPOCHSECONDS auto-updates).
+refresh_epoch() {
+    if [[ "$_has_zsh_datetime" == false ]]; then
+        EPOCHSECONDS=$(/bin/date +%s 2>/dev/null || echo 0)
+    fi
+}
 
 # --- Config ----------------------------------------------------------------
 readonly IFACE="en6"
@@ -29,7 +43,7 @@ readonly MAX_RECOVERY_ATTEMPTS=2   # give up after this many failed recoveries
 readonly MAX_LOG_BYTES=1048576     # rotate log at 1 MB
 readonly ROTATION_CHECK_INTERVAL=100  # check log size every N iterations (~5 min)
 readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was sleeping
-readonly BOOT_GRACE=120               # delay first link-up notification for never-seen adapter until uptime exceeds this (s)
+readonly BOOT_GRACE=120               # suppress first link-up notification for a never-seen adapter until uptime exceeds this (s)
 
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin"
 
@@ -83,7 +97,10 @@ fi
 # --- Helpers ----------------------------------------------------------------
 log_msg() {
     local ts
-    strftime -s ts '%Y-%m-%d %H:%M:%S' "$EPOCHSECONDS" 2>/dev/null || ts="UNKNOWN_TIME"
+    refresh_epoch
+    strftime -s ts '%Y-%m-%d %H:%M:%S' "$EPOCHSECONDS" 2>/dev/null \
+        || ts=$(/bin/date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) \
+        || ts="UNKNOWN_TIME"
     if ! printf '%s  %s\n' "$ts" "$1" >> "$LOG" 2>/dev/null; then
         printf '%s  LOG_WRITE_FAILED: %s\n' "$ts" "$1" >&2
     fi
@@ -137,6 +154,7 @@ interruptible_sleep() {
 # --- Recovery (escalating) --------------------------------------------------
 attempt_recovery() {
     local now
+    refresh_epoch
     now=$EPOCHSECONDS
 
     # Respect cooldown to prevent recovery loops
@@ -213,6 +231,7 @@ while true; do
     fi
 
     # Detect wake from sleep via timestamp gap
+    refresh_epoch
     now_poll=$EPOCHSECONDS
     if (( now_poll > 0 && last_poll_at > 0 && now_poll - last_poll_at > WAKE_THRESHOLD )); then
         log_msg "[WAKE] System resumed after $(( now_poll - last_poll_at ))s sleep"
