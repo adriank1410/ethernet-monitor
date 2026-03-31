@@ -202,9 +202,9 @@ trap cleanup SIGTERM SIGINT
 # --- Startup validation -----------------------------------------------------
 log_msg "Monitor started (PID $$, interface $IFACE, poll ${CHECK_INTERVAL}s)"
 
-if ! networksetup -listallnetworkservices 2>/dev/null | grep -xqF "$SERVICE"; then
+if ! networksetup -listallnetworkservices 2>/dev/null | tail -n +2 | sed 's/^\* //' | grep -xqF "$SERVICE"; then
     log_msg "[ERROR] Network service '$SERVICE' not found. Recovery step 2 will fail."
-    log_msg "[ERROR] Available: $(networksetup -listallnetworkservices 2>/dev/null | tail -n +2 | tr '\n' ', ')"
+    log_msg "[ERROR] Available: $(networksetup -listallnetworkservices 2>/dev/null | tail -n +2 | sed 's/^\* //' | tr '\n' ', ')"
 fi
 
 # --- Main loop --------------------------------------------------------------
