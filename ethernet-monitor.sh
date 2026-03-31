@@ -36,17 +36,20 @@ readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was s
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin"
 
 # --- Localization (PL/EN) ---------------------------------------------------
-# Read language from the console user's preferences (not root's)
-console_uid=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/UID/ { print $3 }' 2>/dev/null)
-sys_lang=""
-if [[ -n "${console_uid:-}" && "$console_uid" != "0" ]]; then
-    sys_lang=$(launchctl asuser "$console_uid" defaults read -g AppleLanguages 2>/dev/null \
-        | sed -n 's/.*"\(.*\)".*/\1/p' | head -1)
+# Override with ETHMON_LANG=pl or ETHMON_LANG=en in the plist EnvironmentVariables,
+# otherwise auto-detect from console user's system language.
+if [[ -z "${ETHMON_LANG:-}" ]]; then
+    console_uid=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/UID/ { print $3 }' 2>/dev/null)
+    ETHMON_LANG=""
+    if [[ -n "${console_uid:-}" && "$console_uid" != "0" ]]; then
+        ETHMON_LANG=$(launchctl asuser "$console_uid" defaults read -g AppleLanguages 2>/dev/null \
+            | sed -n 's/.*"\(.*\)".*/\1/p' | head -1)
+    fi
+    if [[ -z "${ETHMON_LANG:-}" ]]; then
+        ETHMON_LANG=$(defaults read -g AppleLanguages 2>/dev/null | sed -n 's/.*"\(.*\)".*/\1/p' | head -1)
+    fi
 fi
-if [[ -z "${sys_lang:-}" ]]; then
-    sys_lang=$(defaults read -g AppleLanguages 2>/dev/null | sed -n 's/.*"\(.*\)".*/\1/p' | head -1)
-fi
-if [[ "$sys_lang" == pl* ]]; then
+if [[ "$ETHMON_LANG" == pl* ]]; then
     readonly MSG_LINK_DOWN="Ethernet link padł — czekam na auto-recovery..."
     readonly MSG_SELF_HEALED="Ethernet wrócił sam"
     readonly MSG_RECOVERED_IFCONFIG="Ethernet wrócił (ifconfig reset)"

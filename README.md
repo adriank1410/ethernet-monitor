@@ -15,19 +15,21 @@ A lightweight daemon (~1.5 MB RAM, 0% CPU) that polls the `en6` interface every 
 3. **Escalating recovery** — `ifconfig down/up`, then `networksetup` service toggle
 4. **Gives up after 2 failures** — no notification spam, resets on adapter replug
 5. **Detects sleep/wake** — waits for link negotiation instead of false-alarming
-6. **macOS notifications** with sounds (Purr / Glass / Basso)
+6. **macOS notifications** with sounds — localized to Polish or English based on system language
 
 ### Notifications
 
-| Event | Message | Sound |
-|---|---|---|
-| Link dropped | "Ethernet link padł — czekam na auto-recovery..." | Purr |
-| Self-healed | "Ethernet wrócił sam" | Glass |
-| Recovery worked | "Ethernet wrócił (ifconfig reset)" | Glass |
-| Recovery failed permanently | "Ethernet nie wrócił — wyjmij i włóż przejściówkę" | Basso |
-| Link up after replug/wake | "Ethernet podłączony" | Glass |
-| Adapter unplugged | *(silent)* | — |
-| System boot | *(silent)* | — |
+| Event | English | Polski | Sound |
+|---|---|---|---|
+| Link dropped | Ethernet link dropped — attempting auto-recovery... | Ethernet link padł — czekam na auto-recovery... | Purr |
+| Self-healed | Ethernet recovered on its own | Ethernet wrócił sam | Glass |
+| Recovery worked | Ethernet restored (ifconfig reset) | Ethernet wrócił (ifconfig reset) | Glass |
+| Recovery failed | Ethernet not restored — replug the adapter | Ethernet nie wrócił — wyjmij i włóż przejściówkę | Basso |
+| Link up after replug/wake | Ethernet connected | Ethernet podłączony | Glass |
+| Adapter unplugged | *(silent)* | *(silent)* | — |
+| System boot | *(silent)* | *(silent)* | — |
+
+Language is auto-detected from the console user's system preferences. To force a language, set `ETHMON_LANG` in the plist (see [Configuration](#configuration)).
 
 ## Install
 
@@ -70,6 +72,20 @@ Edit `ethernet-monitor.sh` — constants at the top:
 | `MAX_RECOVERY_ATTEMPTS` | `2` | Give up after N failed recoveries |
 | `WAKE_THRESHOLD` | `60` | Time gap (s) that indicates system sleep |
 
+### Force notification language
+
+By default, the daemon reads the console user's system language. To override, add an `EnvironmentVariables` key to the plist:
+
+```xml
+<key>EnvironmentVariables</key>
+<dict>
+    <key>ETHMON_LANG</key>
+    <string>en</string>  <!-- or "pl" -->
+</dict>
+```
+
+Then reinstall with `sudo ./install.sh`.
+
 ## Files
 
 | File | Installed to |
@@ -78,3 +94,7 @@ Edit `ethernet-monitor.sh` — constants at the top:
 | `com.local.ethernet-monitor.plist` | `/Library/LaunchDaemons/` |
 
 Logs: `/var/log/ethernet-monitor.log` (auto-rotated at 1 MB)
+
+## License
+
+[MIT](LICENSE)
