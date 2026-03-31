@@ -48,6 +48,6 @@ if launchctl print "system/$LABEL" >/dev/null 2>&1 || launchctl list "$LABEL" >/
     echo "  tail -f /var/log/ethernet-monitor.log   # watch log"
     echo "  sudo ./uninstall.sh                     # remove"
 else
-    echo "WARNING: Daemon failed to start. Check: sudo launchctl list $LABEL"
+    echo "WARNING: Daemon failed to start. Check: sudo launchctl print system/$LABEL"
     exit 1
 fi
