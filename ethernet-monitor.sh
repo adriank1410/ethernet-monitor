@@ -138,8 +138,8 @@ is_display_on() {
     echo "$ioreg_out" | grep -q '"CurrentPowerState" = 4'
 }
 
-# Check if a pending notification contradicts current iface state.
-# Uses global iface_output and pending_is_good_news. Returns 0 if stale.
+# Check if the pending notification contradicts current iface state.
+# Uses globals: iface_output, pending_is_good_news. Returns 0 if stale.
 _pending_is_stale() {
     if [[ "$iface_output" == *"status: active"* ]]; then
         # Link is up — bad-news pending is stale
@@ -347,7 +347,7 @@ while true; do
         refresh_epoch
         if (( wake_settle_until == 0 || EPOCHSECONDS >= wake_settle_until )); then
             if is_display_on; then
-                if _pending_is_stale "$pending_notify_msg"; then
+                if _pending_is_stale; then
                     log_msg "[STALE] Skipping outdated: $pending_notify_msg"
                 else
                     log_msg "[DEFERRED] Delivering: $pending_notify_msg"
