@@ -132,10 +132,13 @@ get_console_uid() {
 # IODisplayWrangler CurrentPowerState: 4 = on.
 # If ioreg fails or class not found, assumes display is on (don't suppress).
 is_display_on() {
-    local ioreg_out
+    local ioreg_out power_state
     ioreg_out=$(ioreg -r -d 1 -w 0 -c IODisplayWrangler 2>/dev/null)
     [[ -z "$ioreg_out" ]] && return 0
-    echo "$ioreg_out" | grep -q '"CurrentPowerState" = 4'
+    power_state=$(echo "$ioreg_out" | sed -n 's/.*"CurrentPowerState" = \([0-9]*\).*/\1/p')
+    # If we can't determine the power state, assume display is on
+    [[ -z "$power_state" ]] && return 0
+    (( power_state == 4 ))
 }
 
 # Check if the pending notification contradicts current iface state.
