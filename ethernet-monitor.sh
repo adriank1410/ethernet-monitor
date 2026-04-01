@@ -181,8 +181,9 @@ notify() {
     local is_good=true
     [[ "$msg" == "$MSG_LINK_DOWN" || "$msg" == "$MSG_GAVE_UP" ]] && is_good=false
     # Suppress during wake settle (link stabilization after wake)
-    refresh_epoch
-    if (( wake_settle_until > 0 && EPOCHSECONDS < wake_settle_until )); then
+    local notify_now
+    notify_now=$(fresh_epoch)
+    if (( wake_settle_until > 0 && notify_now < wake_settle_until )); then
         log_msg "[SUPPRESSED] $msg"
         pending_notify_msg="$msg"
         pending_notify_sound="$sound"
@@ -236,8 +237,7 @@ check_mid_loop_wake() {
 # --- Recovery (escalating) --------------------------------------------------
 attempt_recovery() {
     local now
-    refresh_epoch
-    now=$EPOCHSECONDS
+    now=$(fresh_epoch)
 
     # Respect cooldown to prevent recovery loops
     if (( now > 0 && last_recovery_at > 0 && now - last_recovery_at < RECOVERY_COOLDOWN )); then
@@ -353,8 +353,9 @@ while true; do
     # Only deliver "bad news" (link_down, gave_up) — good news is informational
     # and the user will see ethernet working without a notification.
     if [[ -n "$pending_notify_msg" ]]; then
-        refresh_epoch
-        if (( wake_settle_until == 0 || EPOCHSECONDS >= wake_settle_until )); then
+        local pending_now
+        pending_now=$(fresh_epoch)
+        if (( wake_settle_until == 0 || pending_now >= wake_settle_until )); then
             if is_display_on; then
                 if [[ "$pending_is_good_news" == true ]]; then
                     log_msg "[DROPPED] Good-news pending not needed: $pending_notify_msg"
@@ -434,8 +435,9 @@ while true; do
 
     # Still down, adapter still present — attempt recovery (cooldown-protected)
     # During wake settle, skip active recovery — just wait for things to stabilize
-    refresh_epoch
-    if (( wake_settle_until > 0 && EPOCHSECONDS < wake_settle_until )); then
+    local settle_now
+    settle_now=$(fresh_epoch)
+    if (( wake_settle_until > 0 && settle_now < wake_settle_until )); then
         log_msg "[SETTLE] Skipping recovery (wake settle active)"
         sleep "$CHECK_INTERVAL"
         continue
