@@ -92,6 +92,7 @@ first_link_up=true
 wake_settle_until=0
 pending_notify_msg=""
 pending_notify_sound=""
+pending_is_good_news=true
 boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*{ sec = \([0-9]*\).*/\1/p') || boot_sec=0
 # Ensure boot_sec is numeric; default to 0 if empty/non-numeric
 if [[ -z "$boot_sec" || ! "$boot_sec" =~ '^[0-9]+$' ]]; then
@@ -138,15 +139,14 @@ is_display_on() {
 }
 
 # Check if a pending notification contradicts current iface state.
-# Uses global iface_output. Returns 0 if stale (should discard).
+# Uses global iface_output and pending_is_good_news. Returns 0 if stale.
 _pending_is_stale() {
     if [[ "$iface_output" == *"status: active"* ]]; then
-        # Link is up — "bad news" pending is stale
-        [[ "$1" == "$MSG_LINK_DOWN" || "$1" == "$MSG_GAVE_UP" ]]
+        # Link is up — bad-news pending is stale
+        [[ "$pending_is_good_news" == false ]]
     else
-        # Link is down — "good news" pending is stale
-        [[ "$1" == "$MSG_CONNECTED" || "$1" == "$MSG_SELF_HEALED" || \
-           "$1" == "$MSG_RECOVERED_IFCONFIG" || "$1" == "$MSG_RECOVERED_NETSETUP" ]]
+        # Link is down — good-news pending is stale
+        [[ "$pending_is_good_news" == true ]]
     fi
 }
 
@@ -170,12 +170,16 @@ APPLESCRIPT
 
 notify() {
     local msg="$1" sound="${2:-Glass}"
+    # Classify: link_down and gave_up are bad news, everything else is good
+    local is_good=true
+    [[ "$msg" == "$MSG_LINK_DOWN" || "$msg" == "$MSG_GAVE_UP" ]] && is_good=false
     # Suppress during wake settle (link stabilization after wake)
     refresh_epoch
     if (( wake_settle_until > 0 && EPOCHSECONDS < wake_settle_until )); then
         log_msg "[SUPPRESSED] $msg"
         pending_notify_msg="$msg"
         pending_notify_sound="$sound"
+        pending_is_good_news=$is_good
         return
     fi
     # Suppress when display is off (DarkWake, display sleep, lid closed)
@@ -183,6 +187,7 @@ notify() {
         log_msg "[SUPPRESSED] $msg (display off)"
         pending_notify_msg="$msg"
         pending_notify_sound="$sound"
+        pending_is_good_news=$is_good
         return
     fi
     pending_notify_msg=""
