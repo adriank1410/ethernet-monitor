@@ -32,6 +32,13 @@ refresh_epoch() {
     fi
 }
 
+# Get guaranteed-fresh wall-clock epoch from the kernel.
+# zsh/datetime's EPOCHSECONDS may return stale values immediately after
+# process resumes from system sleep / DarkWake.
+fresh_epoch() {
+    /bin/date +%s 2>/dev/null || { refresh_epoch; echo "$EPOCHSECONDS"; }
+}
+
 # --- Config ----------------------------------------------------------------
 readonly IFACE="en6"
 readonly SERVICE="USB 10/100/1000 LAN"
@@ -102,10 +109,7 @@ fi
 # --- Helpers ----------------------------------------------------------------
 log_msg() {
     local ts
-    refresh_epoch
-    strftime -s ts '%Y-%m-%d %H:%M:%S' "$EPOCHSECONDS" 2>/dev/null \
-        || ts=$(/bin/date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) \
-        || ts="UNKNOWN_TIME"
+    ts=$(/bin/date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || ts="UNKNOWN_TIME"
     if ! printf '%s  %s\n' "$ts" "$1" >> "$LOG" 2>/dev/null; then
         printf '%s  LOG_WRITE_FAILED: %s\n' "$ts" "$1" >&2
     fi
@@ -212,15 +216,16 @@ interruptible_sleep() {
 # Compares wall-clock time against now_poll (set at loop top).
 # Returns 0 if wake detected (caller should restart main loop or abort).
 check_mid_loop_wake() {
-    refresh_epoch
-    if (( EPOCHSECONDS > 0 && now_poll > 0 && EPOCHSECONDS - now_poll > WAKE_THRESHOLD )); then
-        log_msg "[WAKE] System resumed after $(( EPOCHSECONDS - now_poll ))s (mid-loop)"
+    local real_now
+    real_now=$(fresh_epoch)
+    if (( real_now > 0 && now_poll > 0 && real_now - now_poll > WAKE_THRESHOLD )); then
+        log_msg "[WAKE] System resumed after $(( real_now - now_poll ))s (mid-loop)"
         adapter_was_present=false
         link_was_active=false
         recovery_failures=0
-        wake_settle_until=$(( EPOCHSECONDS + WAKE_SETTLE ))
-        last_poll_at=$EPOCHSECONDS
-        now_poll=$EPOCHSECONDS
+        wake_settle_until=$(( real_now + WAKE_SETTLE ))
+        last_poll_at=$real_now
+        now_poll=$real_now
         pending_notify_msg=""
         pending_notify_sound=""
         return 0
@@ -310,8 +315,7 @@ while true; do
     fi
 
     # Detect wake from sleep via timestamp gap
-    refresh_epoch
-    now_poll=$EPOCHSECONDS
+    now_poll=$(fresh_epoch)
     if (( now_poll > 0 && last_poll_at > 0 && now_poll - last_poll_at > WAKE_THRESHOLD )); then
         log_msg "[WAKE] System resumed after $(( now_poll - last_poll_at ))s sleep"
         adapter_was_present=false
@@ -345,12 +349,16 @@ while true; do
 
     # --- Adapter is present ---
 
-    # Deliver pending notification now that current state is known
+    # Deliver pending notification now that current state is known.
+    # Only deliver "bad news" (link_down, gave_up) — good news is informational
+    # and the user will see ethernet working without a notification.
     if [[ -n "$pending_notify_msg" ]]; then
         refresh_epoch
         if (( wake_settle_until == 0 || EPOCHSECONDS >= wake_settle_until )); then
             if is_display_on; then
-                if _pending_is_stale; then
+                if [[ "$pending_is_good_news" == true ]]; then
+                    log_msg "[DROPPED] Good-news pending not needed: $pending_notify_msg"
+                elif _pending_is_stale; then
                     log_msg "[STALE] Skipping outdated: $pending_notify_msg"
                 else
                     log_msg "[DEFERRED] Delivering: $pending_notify_msg"
