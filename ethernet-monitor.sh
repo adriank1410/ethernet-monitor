@@ -44,6 +44,7 @@ readonly MAX_LOG_BYTES=1048576     # rotate log at 1 MB
 readonly ROTATION_CHECK_INTERVAL=100  # check log size every N iterations (~5 min)
 readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was sleeping
 readonly BOOT_GRACE=120               # suppress first link-up notification for a never-seen adapter until uptime exceeds this (s)
+readonly WAKE_SETTLE=30               # suppress notifications for this long (s) after wake detection
 
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin"
 
@@ -88,6 +89,10 @@ iface_output=""
 last_poll_at=0
 now_poll=0
 first_link_up=true
+wake_settle_until=0
+pending_notify_msg=""
+pending_notify_sound=""
+pending_is_good_news=true
 boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*{ sec = \([0-9]*\).*/\1/p') || boot_sec=0
 # Ensure boot_sec is numeric; default to 0 if empty/non-numeric
 if [[ -z "$boot_sec" || ! "$boot_sec" =~ '^[0-9]+$' ]]; then
@@ -123,7 +128,32 @@ get_console_uid() {
         | awk '/CGSSessionUniqueSessionUUID/ { next } /^[[:space:]]*UID[[:space:]]*:/ { print $3 }'
 }
 
-notify() {
+# Returns 0 if the display is currently powered on, 1 if off.
+# IODisplayWrangler CurrentPowerState: 4 = on.
+# If ioreg fails or class not found, assumes display is on (don't suppress).
+is_display_on() {
+    local ioreg_out power_state
+    ioreg_out=$(ioreg -r -d 1 -w 0 -c IODisplayWrangler 2>/dev/null)
+    [[ -z "$ioreg_out" ]] && return 0
+    power_state=$(echo "$ioreg_out" | sed -n 's/.*"CurrentPowerState" = \([0-9]*\).*/\1/p')
+    # If we can't determine the power state, assume display is on
+    [[ -z "$power_state" ]] && return 0
+    (( power_state == 4 ))
+}
+
+# Check if the pending notification contradicts current iface state.
+# Uses globals: iface_output, pending_is_good_news. Returns 0 if stale.
+_pending_is_stale() {
+    if [[ "$iface_output" == *"status: active"* ]]; then
+        # Link is up — bad-news pending is stale
+        [[ "$pending_is_good_news" == false ]]
+    else
+        # Link is down — good-news pending is stale
+        [[ "$pending_is_good_news" == true ]]
+    fi
+}
+
+_deliver_notify() {
     local msg="$1" sound="${2:-Glass}"
     local console_uid
     console_uid=$(get_console_uid) || return
@@ -141,6 +171,33 @@ APPLESCRIPT
     fi
 }
 
+notify() {
+    local msg="$1" sound="${2:-Glass}"
+    # Classify: link_down and gave_up are bad news, everything else is good
+    local is_good=true
+    [[ "$msg" == "$MSG_LINK_DOWN" || "$msg" == "$MSG_GAVE_UP" ]] && is_good=false
+    # Suppress during wake settle (link stabilization after wake)
+    refresh_epoch
+    if (( wake_settle_until > 0 && EPOCHSECONDS < wake_settle_until )); then
+        log_msg "[SUPPRESSED] $msg"
+        pending_notify_msg="$msg"
+        pending_notify_sound="$sound"
+        pending_is_good_news=$is_good
+        return
+    fi
+    # Suppress when display is off (DarkWake, display sleep, lid closed)
+    if ! is_display_on; then
+        log_msg "[SUPPRESSED] $msg (display off)"
+        pending_notify_msg="$msg"
+        pending_notify_sound="$sound"
+        pending_is_good_news=$is_good
+        return
+    fi
+    pending_notify_msg=""
+    pending_notify_sound=""
+    _deliver_notify "$msg" "$sound"
+}
+
 get_iface_status() {
     ifconfig "$IFACE" 2>/dev/null
 }
@@ -149,6 +206,26 @@ get_iface_status() {
 interruptible_sleep() {
     sleep "$1" &
     wait $!
+}
+
+# Detect system sleep that occurred during an interruptible_sleep.
+# Compares wall-clock time against now_poll (set at loop top).
+# Returns 0 if wake detected (caller should restart main loop or abort).
+check_mid_loop_wake() {
+    refresh_epoch
+    if (( EPOCHSECONDS > 0 && now_poll > 0 && EPOCHSECONDS - now_poll > WAKE_THRESHOLD )); then
+        log_msg "[WAKE] System resumed after $(( EPOCHSECONDS - now_poll ))s (mid-loop)"
+        adapter_was_present=false
+        link_was_active=false
+        recovery_failures=0
+        wake_settle_until=$(( EPOCHSECONDS + WAKE_SETTLE ))
+        last_poll_at=$EPOCHSECONDS
+        now_poll=$EPOCHSECONDS
+        pending_notify_msg=""
+        pending_notify_sound=""
+        return 0
+    fi
+    return 1
 }
 
 # --- Recovery (escalating) --------------------------------------------------
@@ -171,6 +248,7 @@ attempt_recovery() {
     interruptible_sleep 2
     err=$(ifconfig "$IFACE" up 2>&1) || log_msg "[WARN] ifconfig up: $err"
     interruptible_sleep 5
+    if check_mid_loop_wake; then return 1; fi
 
     local status_output
     status_output=$(get_iface_status)
@@ -189,6 +267,7 @@ attempt_recovery() {
     err=$(networksetup -setnetworkserviceenabled "$SERVICE" on 2>&1) \
         || log_msg "[WARN] networksetup on: $err"
     interruptible_sleep 5
+    if check_mid_loop_wake; then return 1; fi
 
     status_output=$(get_iface_status)
     if [[ "$status_output" == *"status: active"* ]]; then
@@ -238,6 +317,9 @@ while true; do
         adapter_was_present=false
         link_was_active=false
         recovery_failures=0
+        wake_settle_until=$(( now_poll + WAKE_SETTLE ))
+        pending_notify_msg=""
+        pending_notify_sound=""
     fi
     last_poll_at=$now_poll
 
@@ -251,6 +333,8 @@ while true; do
             link_was_active=false
             recovery_failures=0
             first_link_up=false
+            pending_notify_msg=""
+            pending_notify_sound=""
         elif (( now_poll > 0 && boot_sec > 0 && now_poll - boot_sec > BOOT_GRACE )); then
             # System uptime beyond BOOT_GRACE without ever seeing adapter — not early boot
             first_link_up=false
@@ -261,6 +345,23 @@ while true; do
 
     # --- Adapter is present ---
 
+    # Deliver pending notification now that current state is known
+    if [[ -n "$pending_notify_msg" ]]; then
+        refresh_epoch
+        if (( wake_settle_until == 0 || EPOCHSECONDS >= wake_settle_until )); then
+            if is_display_on; then
+                if _pending_is_stale; then
+                    log_msg "[STALE] Skipping outdated: $pending_notify_msg"
+                else
+                    log_msg "[DEFERRED] Delivering: $pending_notify_msg"
+                    _deliver_notify "$pending_notify_msg" "$pending_notify_sound"
+                fi
+                pending_notify_msg=""
+                pending_notify_sound=""
+            fi
+        fi
+    fi
+
     if [[ "$adapter_was_present" == false ]]; then
         # Adapter just appeared — give it time to negotiate link
         log_msg "[ADAPTER] $IFACE appeared, waiting ${SELF_HEAL_WAIT}s for link negotiation..."
@@ -268,6 +369,7 @@ while true; do
         link_was_active=false
         recovery_failures=0
         interruptible_sleep "$SELF_HEAL_WAIT"
+        if check_mid_loop_wake; then continue; fi
 
         iface_output=$(get_iface_status)
         if [[ -z "$iface_output" ]]; then
@@ -306,6 +408,7 @@ while true; do
         link_was_active=false
 
         interruptible_sleep "$SELF_HEAL_WAIT"
+        if check_mid_loop_wake; then continue; fi
 
         iface_output=$(get_iface_status)
         if [[ -z "$iface_output" ]]; then
@@ -322,6 +425,13 @@ while true; do
     fi
 
     # Still down, adapter still present — attempt recovery (cooldown-protected)
+    # During wake settle, skip active recovery — just wait for things to stabilize
+    refresh_epoch
+    if (( wake_settle_until > 0 && EPOCHSECONDS < wake_settle_until )); then
+        log_msg "[SETTLE] Skipping recovery (wake settle active)"
+        sleep "$CHECK_INTERVAL"
+        continue
+    fi
     if attempt_recovery; then
         link_was_active=true
     fi
