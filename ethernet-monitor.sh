@@ -32,9 +32,8 @@ refresh_epoch() {
     fi
 }
 
-# Get guaranteed-fresh wall-clock epoch from the kernel.
-# zsh/datetime's EPOCHSECONDS may return stale values immediately after
-# process resumes from system sleep / DarkWake.
+# Get wall-clock epoch from /bin/date (immune to EPOCHSECONDS staleness
+# after DarkWake). Falls back to EPOCHSECONDS if /bin/date fails.
 fresh_epoch() {
     /bin/date +%s 2>/dev/null || { refresh_epoch; echo "$EPOCHSECONDS"; }
 }
@@ -353,7 +352,6 @@ while true; do
     # Only deliver "bad news" (link_down, gave_up) — good news is informational
     # and the user will see ethernet working without a notification.
     if [[ -n "$pending_notify_msg" ]]; then
-        local pending_now
         pending_now=$(fresh_epoch)
         if (( wake_settle_until == 0 || pending_now >= wake_settle_until )); then
             if is_display_on; then
@@ -435,7 +433,6 @@ while true; do
 
     # Still down, adapter still present — attempt recovery (cooldown-protected)
     # During wake settle, skip active recovery — just wait for things to stabilize
-    local settle_now
     settle_now=$(fresh_epoch)
     if (( wake_settle_until > 0 && settle_now < wake_settle_until )); then
         log_msg "[SETTLE] Skipping recovery (wake settle active)"
