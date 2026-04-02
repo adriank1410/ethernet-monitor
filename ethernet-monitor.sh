@@ -50,7 +50,7 @@ readonly MAX_LOG_BYTES=1048576     # rotate log at 1 MB
 readonly ROTATION_CHECK_INTERVAL=100  # check log size every N iterations (~5 min)
 readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was sleeping
 readonly BOOT_GRACE=120               # suppress first link-up notification for a never-seen adapter until uptime exceeds this (s)
-readonly WAKE_SETTLE=30               # suppress notifications for this long (s) after wake detection
+readonly WAKE_SETTLE=120              # suppress notifications + recovery after wake (s); must exceed max DarkWake duration
 
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin"
 
@@ -222,7 +222,6 @@ check_mid_loop_wake() {
         log_msg "[WAKE] System resumed after $(( real_now - now_poll ))s (mid-loop)"
         adapter_was_present=false
         link_was_active=false
-        recovery_failures=0
         wake_settle_until=$(( real_now + WAKE_SETTLE ))
         last_poll_at=$real_now
         now_poll=$real_now
@@ -319,12 +318,19 @@ while true; do
         log_msg "[WAKE] System resumed after $(( now_poll - last_poll_at ))s sleep"
         adapter_was_present=false
         link_was_active=false
-        recovery_failures=0
+        # Don't reset recovery_failures — let gave-up state carry across DarkWakes
+        # to prevent repeated "nie wrócił" notifications. Reset only on LINK UP or real replug.
         wake_settle_until=$(( now_poll + WAKE_SETTLE ))
         pending_notify_msg=""
         pending_notify_sound=""
     fi
     last_poll_at=$now_poll
+
+    # Clear expired settle. Don't reset recovery_failures here — gave-up state
+    # is sticky until a positive signal (LINK UP or real adapter replug).
+    if (( wake_settle_until > 0 && now_poll >= wake_settle_until )); then
+        wake_settle_until=0
+    fi
 
     iface_output=$(get_iface_status)
 
@@ -374,7 +380,9 @@ while true; do
         log_msg "[ADAPTER] $IFACE appeared, waiting ${SELF_HEAL_WAIT}s for link negotiation..."
         adapter_was_present=true
         link_was_active=false
-        recovery_failures=0
+        # Don't reset recovery_failures here — wake detection sets adapter_was_present=false
+        # to force re-negotiation, but that's not a real replug. Real replugs go through
+        # "adapter disappeared" first (which resets recovery_failures).
         interruptible_sleep "$SELF_HEAL_WAIT"
         if check_mid_loop_wake; then continue; fi
 
@@ -401,6 +409,12 @@ while true; do
     fi
 
     # --- Link is down, adapter is present ---
+
+    # During wake settle, skip all link-down handling — just poll
+    if (( now_poll > 0 && now_poll < wake_settle_until )); then
+        sleep "$CHECK_INTERVAL"
+        continue
+    fi
 
     # Already gave up — wait for state change (adapter replug or link return)
     if (( recovery_failures >= MAX_RECOVERY_ATTEMPTS )); then
@@ -432,13 +446,6 @@ while true; do
     fi
 
     # Still down, adapter still present — attempt recovery (cooldown-protected)
-    # During wake settle, skip active recovery — just wait for things to stabilize
-    settle_now=$(fresh_epoch)
-    if (( wake_settle_until > 0 && settle_now < wake_settle_until )); then
-        log_msg "[SETTLE] Skipping recovery (wake settle active)"
-        sleep "$CHECK_INTERVAL"
-        continue
-    fi
     if attempt_recovery; then
         link_was_active=true
     fi
