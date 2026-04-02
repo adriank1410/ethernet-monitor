@@ -408,6 +408,20 @@ while true; do
 
     # --- Link is down, adapter is present ---
 
+    # During wake settle, skip all link-down handling — just poll
+    settle_now=$(fresh_epoch)
+    if (( wake_settle_until > 0 && settle_now < wake_settle_until )); then
+        log_msg "[SETTLE] Skipping recovery (wake settle active)"
+        sleep "$CHECK_INTERVAL"
+        continue
+    fi
+    # Settle just expired — give recovery a fresh budget for this wake cycle.
+    # DarkWakes end before settle expires, so this only fires on real wakes.
+    if (( wake_settle_until > 0 )); then
+        recovery_failures=0
+        wake_settle_until=0
+    fi
+
     # Already gave up — wait for state change (adapter replug or link return)
     if (( recovery_failures >= MAX_RECOVERY_ATTEMPTS )); then
         sleep "$CHECK_INTERVAL"
@@ -438,19 +452,6 @@ while true; do
     fi
 
     # Still down, adapter still present — attempt recovery (cooldown-protected)
-    # During wake settle, skip active recovery — just wait for things to stabilize
-    settle_now=$(fresh_epoch)
-    if (( wake_settle_until > 0 && settle_now < wake_settle_until )); then
-        log_msg "[SETTLE] Skipping recovery (wake settle active)"
-        sleep "$CHECK_INTERVAL"
-        continue
-    fi
-    # Settle just expired — give recovery a fresh budget for this wake cycle.
-    # DarkWakes end before settle expires, so this only fires on real wakes.
-    if (( wake_settle_until > 0 )); then
-        recovery_failures=0
-        wake_settle_until=0
-    fi
     if attempt_recovery; then
         link_was_active=true
     fi
