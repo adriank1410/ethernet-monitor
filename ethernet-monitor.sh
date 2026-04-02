@@ -50,7 +50,7 @@ readonly MAX_LOG_BYTES=1048576     # rotate log at 1 MB
 readonly ROTATION_CHECK_INTERVAL=100  # check log size every N iterations (~5 min)
 readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was sleeping
 readonly BOOT_GRACE=120               # suppress first link-up notification for a never-seen adapter until uptime exceeds this (s)
-readonly WAKE_SETTLE=120              # suppress notifications + recovery after wake (s); cleared early on LINK UP
+readonly WAKE_SETTLE=120              # suppress notifications + recovery after wake (s); must exceed max DarkWake duration
 
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin"
 
