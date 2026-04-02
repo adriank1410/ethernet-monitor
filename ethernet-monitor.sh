@@ -383,8 +383,7 @@ while true; do
         # Only reset recovery budget outside settle — during settle, adapter
         # re-enumeration is expected DarkWake behavior, not a real replug.
         # Real replugs go through the "adapter disappeared" path first which resets.
-        settle_now=$(fresh_epoch)
-        if (( wake_settle_until == 0 || settle_now >= wake_settle_until )); then
+        if (( wake_settle_until == 0 || now_poll >= wake_settle_until )); then
             recovery_failures=0
         fi
         interruptible_sleep "$SELF_HEAL_WAIT"
@@ -415,7 +414,7 @@ while true; do
     # --- Link is down, adapter is present ---
 
     # During wake settle, skip all link-down handling — just poll
-    if (( wake_settle_until > 0 )); then
+    if (( now_poll > 0 && now_poll < wake_settle_until )); then
         sleep "$CHECK_INTERVAL"
         continue
     fi
