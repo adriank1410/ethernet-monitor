@@ -445,6 +445,12 @@ while true; do
         sleep "$CHECK_INTERVAL"
         continue
     fi
+    # Settle just expired — give recovery a fresh budget for this wake cycle.
+    # DarkWakes end before settle expires, so this only fires on real wakes.
+    if (( wake_settle_until > 0 )); then
+        recovery_failures=0
+        wake_settle_until=0
+    fi
     if attempt_recovery; then
         link_was_active=true
     fi
