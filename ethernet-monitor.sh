@@ -222,7 +222,6 @@ check_mid_loop_wake() {
         log_msg "[WAKE] System resumed after $(( real_now - now_poll ))s (mid-loop)"
         adapter_was_present=false
         link_was_active=false
-        recovery_failures=0
         wake_settle_until=$(( real_now + WAKE_SETTLE ))
         last_poll_at=$real_now
         now_poll=$real_now
@@ -319,7 +318,8 @@ while true; do
         log_msg "[WAKE] System resumed after $(( now_poll - last_poll_at ))s sleep"
         adapter_was_present=false
         link_was_active=false
-        recovery_failures=0
+        # Don't reset recovery_failures — let gave-up state carry across DarkWakes
+        # to prevent repeated "nie wrócił" notifications. Reset only on LINK UP or real replug.
         wake_settle_until=$(( now_poll + WAKE_SETTLE ))
         pending_notify_msg=""
         pending_notify_sound=""
@@ -374,7 +374,13 @@ while true; do
         log_msg "[ADAPTER] $IFACE appeared, waiting ${SELF_HEAL_WAIT}s for link negotiation..."
         adapter_was_present=true
         link_was_active=false
-        recovery_failures=0
+        # Only reset recovery budget outside settle — during settle, adapter
+        # re-enumeration is expected DarkWake behavior, not a real replug.
+        # Real replugs go through the "adapter disappeared" path first which resets.
+        settle_now=$(fresh_epoch)
+        if (( wake_settle_until == 0 || settle_now >= wake_settle_until )); then
+            recovery_failures=0
+        fi
         interruptible_sleep "$SELF_HEAL_WAIT"
         if check_mid_loop_wake; then continue; fi
 
