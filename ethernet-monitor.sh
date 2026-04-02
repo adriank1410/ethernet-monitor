@@ -50,7 +50,7 @@ readonly MAX_LOG_BYTES=1048576     # rotate log at 1 MB
 readonly ROTATION_CHECK_INTERVAL=100  # check log size every N iterations (~5 min)
 readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was sleeping
 readonly BOOT_GRACE=120               # suppress first link-up notification for a never-seen adapter until uptime exceeds this (s)
-readonly WAKE_SETTLE=30               # suppress notifications for this long (s) after wake detection
+readonly WAKE_SETTLE=120              # suppress notifications + recovery after wake (s); cleared early on LINK UP
 
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin"
 
@@ -395,6 +395,9 @@ while true; do
             fi
             link_was_active=true
             recovery_failures=0
+            # Link is up — clear settle so recovery is available immediately
+            # if link drops again (no need to wait the full WAKE_SETTLE)
+            wake_settle_until=0
         fi
         sleep "$CHECK_INTERVAL"
         continue
