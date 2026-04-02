@@ -380,12 +380,9 @@ while true; do
         log_msg "[ADAPTER] $IFACE appeared, waiting ${SELF_HEAL_WAIT}s for link negotiation..."
         adapter_was_present=true
         link_was_active=false
-        # Only reset recovery budget outside settle — during settle, adapter
-        # re-enumeration is expected DarkWake behavior, not a real replug.
-        # Real replugs go through the "adapter disappeared" path first which resets.
-        if (( wake_settle_until == 0 || now_poll >= wake_settle_until )); then
-            recovery_failures=0
-        fi
+        # Don't reset recovery_failures here — wake detection sets adapter_was_present=false
+        # to force re-negotiation, but that's not a real replug. Real replugs go through
+        # "adapter disappeared" first (which resets recovery_failures).
         interruptible_sleep "$SELF_HEAL_WAIT"
         if check_mid_loop_wake; then continue; fi
 
