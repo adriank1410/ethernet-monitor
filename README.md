@@ -16,7 +16,7 @@ A lightweight daemon (~1.5 MB RAM, 0% CPU) that polls the `en6` interface every 
 2. **Waits 10s for self-heal** — transient blips resolve themselves
 3. **Recovery** — `ifconfig down/up` to reset the link
 4. **Gives up after 2 failures** — no notification spam, resets on adapter replug
-5. **Detects sleep/wake** — waits for link negotiation instead of false-alarming; skips recovery when adapter reappears after wake without link history (no cable = stay passive)
+5. **Detects sleep/wake** — waits for link negotiation instead of false-alarming; skips recovery when the display is off (DarkWake/lid closed) and when the adapter reappears after wake without link history (no cable = stay passive)
 6. **macOS notifications** with sounds — localized to Polish or English based on system language
 
 ### Notifications

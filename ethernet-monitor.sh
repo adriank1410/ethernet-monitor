@@ -352,14 +352,17 @@ while true; do
     fi
 
     if [[ "$adapter_was_present" == false ]]; then
-        # Adapter just appeared — give it time to negotiate link
-        log_msg "[ADAPTER] $IFACE appeared, waiting ${SELF_HEAL_WAIT}s for link negotiation..."
         adapter_was_present=true
         link_was_active=false
         # Track whether this appearance is a wake re-enumeration (not a physical plug-in).
         # Wake detection sets adapter_was_present=false; real replugs go through "disappeared".
         if (( wake_settle_until > 0 )); then
             appeared_via_wake=true
+        fi
+        if [[ "$appeared_via_wake" == true && "$link_ever_active" == false ]]; then
+            log_msg "[ADAPTER] $IFACE appeared (wake, no link history — passive)"
+        else
+            log_msg "[ADAPTER] $IFACE appeared, waiting ${SELF_HEAL_WAIT}s for link negotiation..."
         fi
         interruptible_sleep "$SELF_HEAL_WAIT"
         if check_mid_loop_wake; then continue; fi
