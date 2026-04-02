@@ -395,9 +395,6 @@ while true; do
             fi
             link_was_active=true
             recovery_failures=0
-            # Link is up — clear settle so recovery is available immediately
-            # if link drops again (no need to wait the full WAKE_SETTLE)
-            wake_settle_until=0
         fi
         sleep "$CHECK_INTERVAL"
         continue
