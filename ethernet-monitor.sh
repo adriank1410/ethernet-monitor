@@ -326,10 +326,9 @@ while true; do
     fi
     last_poll_at=$now_poll
 
-    # Clear expired settle and reset recovery budget once per wake cycle.
-    # DarkWakes end before settle expires; this only fires on real wakes.
+    # Clear expired settle. Don't reset recovery_failures here — gave-up state
+    # is sticky until a positive signal (LINK UP or real adapter replug).
     if (( wake_settle_until > 0 && now_poll >= wake_settle_until )); then
-        recovery_failures=0
         wake_settle_until=0
     fi
 
