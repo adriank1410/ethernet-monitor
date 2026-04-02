@@ -326,6 +326,13 @@ while true; do
     fi
     last_poll_at=$now_poll
 
+    # Clear expired settle and reset recovery budget once per wake cycle.
+    # DarkWakes end before settle expires; this only fires on real wakes.
+    if (( wake_settle_until > 0 && now_poll >= wake_settle_until )); then
+        recovery_failures=0
+        wake_settle_until=0
+    fi
+
     iface_output=$(get_iface_status)
 
     if [[ -z "$iface_output" ]]; then
@@ -409,17 +416,9 @@ while true; do
     # --- Link is down, adapter is present ---
 
     # During wake settle, skip all link-down handling — just poll
-    settle_now=$(fresh_epoch)
-    if (( wake_settle_until > 0 && settle_now < wake_settle_until )); then
-        log_msg "[SETTLE] Skipping recovery (wake settle active)"
+    if (( wake_settle_until > 0 )); then
         sleep "$CHECK_INTERVAL"
         continue
-    fi
-    # Settle just expired — give recovery a fresh budget for this wake cycle.
-    # DarkWakes end before settle expires, so this only fires on real wakes.
-    if (( wake_settle_until > 0 )); then
-        recovery_failures=0
-        wake_settle_until=0
     fi
 
     # Already gave up — wait for state change (adapter replug or link return)
