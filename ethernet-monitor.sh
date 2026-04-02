@@ -3,11 +3,10 @@
 # ethernet-monitor — auto-recovery daemon for USB Ethernet (RTL8153)
 #
 # Watches the en6 interface. When the adapter is plugged in but the
-# Ethernet link drops, attempts escalating recovery:
+# Ethernet link drops, attempts recovery:
 #   1. Wait for self-heal (10s)
 #   2. ifconfig down/up
-#   3. networksetup service toggle
-#   4. Notify user to physically replug (then stop retrying)
+#   3. Notify user to physically replug (then stop retrying)
 #
 # Install:   sudo ./install.sh
 # Uninstall: sudo ./uninstall.sh
@@ -40,7 +39,6 @@ fresh_epoch() {
 
 # --- Config ----------------------------------------------------------------
 readonly IFACE="en6"
-readonly SERVICE="USB 10/100/1000 LAN"
 readonly LOG="/var/log/ethernet-monitor.log"
 readonly CHECK_INTERVAL=3          # seconds between polls
 readonly SELF_HEAL_WAIT=10         # seconds to wait before intervening
@@ -73,14 +71,12 @@ if [[ "$ETHMON_LANG" == pl* ]]; then
     readonly MSG_LINK_DOWN="Ethernet link padł — czekam na auto-recovery..."
     readonly MSG_SELF_HEALED="Ethernet wrócił sam"
     readonly MSG_RECOVERED_IFCONFIG="Ethernet wrócił (ifconfig reset)"
-    readonly MSG_RECOVERED_NETSETUP="Ethernet wrócił (service reset)"
     readonly MSG_GAVE_UP="Ethernet nie wrócił — wyjmij i włóż przejściówkę"
     readonly MSG_CONNECTED="Ethernet podłączony"
 else
     readonly MSG_LINK_DOWN="Ethernet link dropped — attempting auto-recovery..."
     readonly MSG_SELF_HEALED="Ethernet recovered on its own"
     readonly MSG_RECOVERED_IFCONFIG="Ethernet restored (ifconfig reset)"
-    readonly MSG_RECOVERED_NETSETUP="Ethernet restored (service reset)"
     readonly MSG_GAVE_UP="Ethernet not restored — replug the adapter"
     readonly MSG_CONNECTED="Ethernet connected"
 fi
@@ -96,6 +92,8 @@ last_poll_at=0
 now_poll=0
 first_link_up=true
 wake_settle_until=0
+link_ever_active=false
+appeared_via_wake=false
 pending_notify_msg=""
 pending_notify_sound=""
 pending_is_good_news=true
@@ -232,7 +230,7 @@ check_mid_loop_wake() {
     return 1
 }
 
-# --- Recovery (escalating) --------------------------------------------------
+# --- Recovery ---------------------------------------------------------------
 attempt_recovery() {
     local now
     now=$(fresh_epoch)
@@ -244,8 +242,7 @@ attempt_recovery() {
     fi
     last_recovery_at=$now
 
-    # Step 1: ifconfig down/up
-    log_msg "[RECOVERY] Step 1/2: ifconfig $IFACE down/up"
+    log_msg "[RECOVERY] ifconfig $IFACE down/up"
     local err
     err=$(ifconfig "$IFACE" down 2>&1) || log_msg "[WARN] ifconfig down: $err"
     interruptible_sleep 2
@@ -258,24 +255,6 @@ attempt_recovery() {
     if [[ "$status_output" == *"status: active"* ]]; then
         log_msg "[RECOVERED] ifconfig reset worked"
         notify "$MSG_RECOVERED_IFCONFIG" "Glass"
-        recovery_failures=0
-        return 0
-    fi
-
-    # Step 2: networksetup service toggle
-    log_msg "[RECOVERY] Step 2/2: networksetup toggle \"$SERVICE\""
-    err=$(networksetup -setnetworkserviceenabled "$SERVICE" off 2>&1) \
-        || log_msg "[WARN] networksetup off: $err"
-    interruptible_sleep 3
-    err=$(networksetup -setnetworkserviceenabled "$SERVICE" on 2>&1) \
-        || log_msg "[WARN] networksetup on: $err"
-    interruptible_sleep 5
-    if check_mid_loop_wake; then return 1; fi
-
-    status_output=$(get_iface_status)
-    if [[ "$status_output" == *"status: active"* ]]; then
-        log_msg "[RECOVERED] networksetup toggle worked"
-        notify "$MSG_RECOVERED_NETSETUP" "Glass"
         recovery_failures=0
         return 0
     fi
@@ -299,11 +278,6 @@ trap cleanup SIGTERM SIGINT
 
 # --- Startup validation -----------------------------------------------------
 log_msg "Monitor started (PID $$, interface $IFACE, poll ${CHECK_INTERVAL}s)"
-
-if ! networksetup -listallnetworkservices 2>/dev/null | tail -n +2 | sed 's/^\* //' | grep -xqF "$SERVICE"; then
-    log_msg "[ERROR] Network service '$SERVICE' not found. Recovery step 2 will fail."
-    log_msg "[ERROR] Available: $(networksetup -listallnetworkservices 2>/dev/null | tail -n +2 | sed 's/^\* //' | tr '\n' ', ')"
-fi
 
 # --- Main loop --------------------------------------------------------------
 while true; do
@@ -341,6 +315,8 @@ while true; do
             adapter_was_present=false
             link_was_active=false
             recovery_failures=0
+            link_ever_active=false
+            appeared_via_wake=false
             first_link_up=false
             pending_notify_msg=""
             pending_notify_sound=""
@@ -376,13 +352,18 @@ while true; do
     fi
 
     if [[ "$adapter_was_present" == false ]]; then
-        # Adapter just appeared — give it time to negotiate link
-        log_msg "[ADAPTER] $IFACE appeared, waiting ${SELF_HEAL_WAIT}s for link negotiation..."
         adapter_was_present=true
         link_was_active=false
-        # Don't reset recovery_failures here — wake detection sets adapter_was_present=false
-        # to force re-negotiation, but that's not a real replug. Real replugs go through
-        # "adapter disappeared" first (which resets recovery_failures).
+        # Track whether this appearance is a wake re-enumeration (not a physical plug-in).
+        # Wake detection sets adapter_was_present=false; real replugs go through "disappeared".
+        if (( wake_settle_until > 0 )); then
+            appeared_via_wake=true
+        fi
+        if [[ "$appeared_via_wake" == true && "$link_ever_active" == false ]]; then
+            log_msg "[ADAPTER] $IFACE appeared (wake, no link history — passive)"
+        else
+            log_msg "[ADAPTER] $IFACE appeared, waiting ${SELF_HEAL_WAIT}s for link negotiation..."
+        fi
         interruptible_sleep "$SELF_HEAL_WAIT"
         if check_mid_loop_wake; then continue; fi
 
@@ -402,6 +383,8 @@ while true; do
                 notify "$MSG_CONNECTED" "Glass"
             fi
             link_was_active=true
+            link_ever_active=true
+            appeared_via_wake=false
             recovery_failures=0
         fi
         sleep "$CHECK_INTERVAL"
@@ -418,6 +401,14 @@ while true; do
 
     # Already gave up — wait for state change (adapter replug or link return)
     if (( recovery_failures >= MAX_RECOVERY_ATTEMPTS )); then
+        sleep "$CHECK_INTERVAL"
+        continue
+    fi
+
+    # Adapter re-appeared after wake but link was never active in this adapter
+    # session — likely no cable connected. Stay passive instead of running
+    # recovery that will always fail and produce a spurious notification.
+    if [[ "$appeared_via_wake" == true && "$link_ever_active" == false ]]; then
         sleep "$CHECK_INTERVAL"
         continue
     fi
@@ -446,6 +437,12 @@ while true; do
     fi
 
     # Still down, adapter still present — attempt recovery (cooldown-protected)
+    # Skip recovery when display is off (DarkWake, lid closed) — nobody benefits,
+    # and ifconfig calls during DarkWake cannot succeed.
+    if ! is_display_on; then
+        sleep "$CHECK_INTERVAL"
+        continue
+    fi
     if attempt_recovery; then
         link_was_active=true
     fi

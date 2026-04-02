@@ -2,7 +2,7 @@
 
 Auto-recovery LaunchDaemon for USB Ethernet adapters on macOS.
 
-Works with any USB Ethernet adapter that appears as a standard network interface **after configuring `IFACE`/`SERVICE` in `ethernet-monitor.sh`**. Created to solve random link drops on Realtek RTL8153 (common in USB-C docks/adapters), but compatible with any chipset — it monitors the interface, not the driver.
+Works with any USB Ethernet adapter that appears as a standard network interface **after configuring `IFACE` in `ethernet-monitor.sh`**. Created to solve random link drops on Realtek RTL8153 (common in USB-C docks/adapters), but compatible with any chipset — it monitors the interface, not the driver.
 
 ## Problem
 
@@ -12,11 +12,11 @@ MacBook + USB-C adapter with Ethernet — the link randomly drops while the adap
 
 A lightweight daemon (~1.5 MB RAM, 0% CPU) that polls the `en6` interface every 3 seconds and:
 
-1. **Detects link drops** — adapter present but no Ethernet link (including intentional cable unplugs — the daemon assumes the cable should always be connected; it gives up after 2 failed recovery attempts)
+1. **Detects link drops** — adapter present but no Ethernet link; gives up after 2 failed recovery attempts
 2. **Waits 10s for self-heal** — transient blips resolve themselves
-3. **Escalating recovery** — `ifconfig down/up`, then `networksetup` service toggle
+3. **Recovery** — `ifconfig down/up` to reset the link
 4. **Gives up after 2 failures** — no notification spam, resets on adapter replug
-5. **Detects sleep/wake** — waits for link negotiation instead of false-alarming
+5. **Detects sleep/wake** — waits for link negotiation instead of false-alarming; skips recovery when the display is off (DarkWake/lid closed) and when the adapter reappears after wake without link history (no cable = stay passive)
 6. **macOS notifications** with sounds — localized to Polish or English based on system language
 
 ### Notifications
@@ -67,7 +67,6 @@ Edit `ethernet-monitor.sh` — constants at the top:
 | Variable | Default | Description |
 |---|---|---|
 | `IFACE` | `en6` | Network interface name |
-| `SERVICE` | `USB 10/100/1000 LAN` | networksetup service name |
 | `CHECK_INTERVAL` | `3` | Seconds between polls |
 | `SELF_HEAL_WAIT` | `10` | Seconds to wait before recovery |
 | `RECOVERY_COOLDOWN` | `30` | Min seconds between recovery attempts |
