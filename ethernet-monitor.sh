@@ -306,16 +306,22 @@ cleanup() {
     log_msg "Monitor stopping (PID $$, signal received)"
     exit 0
 }
-trap cleanup SIGTERM SIGINT
 
 # --- Startup validation -----------------------------------------------------
-# When the script is sourced from a test with ETHMON_NO_MAIN=1, skip the main
-# loop so the test can exercise individual functions. Running the script
-# normally (as a LaunchDaemon) leaves this variable unset and proceeds.
+# When the script is sourced from a test with ETHMON_NO_MAIN=1, bail out before
+# installing signal traps or starting the main loop so the test can exercise
+# individual functions without mutating the caller's shell. We only honour the
+# env var when the file is actually being sourced (ZSH_EVAL_CONTEXT contains
+# "file") — otherwise, treat an accidental production env var as a footgun and
+# log a warning instead of silently disabling monitoring.
 if [[ "${ETHMON_NO_MAIN:-0}" == "1" ]]; then
-    return 0 2>/dev/null || exit 0
+    if [[ "${ZSH_EVAL_CONTEXT:-}" == *file* ]]; then
+        return 0
+    fi
+    log_msg "[WARN] ETHMON_NO_MAIN=1 ignored during normal execution; continuing startup"
 fi
 
+trap cleanup SIGTERM SIGINT
 log_msg "Monitor started (PID $$, interface $IFACE, poll ${CHECK_INTERVAL}s)"
 
 # --- Main loop --------------------------------------------------------------

@@ -47,65 +47,81 @@ fail() {
 #   USER_WAKE_RESET_COOLDOWN=600
 # Tests below are written against those exact values.
 
+# Each numbered test below runs a single assertion. Twelve tests total,
+# matching the count in the PR description.
+
 # --- Test 1: user was idle for an hour, just clicked a key ---
 # Expected: retry fires.
 prev_hid_idle=3600
 last_user_wake_reset_at=0
-pass "user returned from long idle" should_retry_after_user_wake 2 10000
+pass "1. user returned from long idle" should_retry_after_user_wake 2 10000
 
 # --- Test 2: user pressing keys non-stop, link just happened to fail ---
 # Expected: no retry (prev never exceeded AWAY threshold).
 prev_hid_idle=2
 last_user_wake_reset_at=0
-fail "user continuously active" should_retry_after_user_wake 1 10000
+fail "2. user continuously active" should_retry_after_user_wake 1 10000
 
 # --- Test 3: genuine return but cooldown still active ---
 # Expected: no retry (cooldown not elapsed).
 prev_hid_idle=3600
 last_user_wake_reset_at=9500   # 500s before now, cooldown is 600s
-fail "cooldown blocks repeat" should_retry_after_user_wake 2 10000
+fail "3. cooldown blocks repeat" should_retry_after_user_wake 2 10000
 
-# --- Test 4: cooldown just elapsed (edge: > not >=) ---
-# Expected: retry fires at 601s, not at 600s.
+# --- Test 4: cooldown exact boundary (edge: > not >=) ---
+# Expected: retry does NOT fire at exactly 600s elapsed.
 prev_hid_idle=3600
 last_user_wake_reset_at=9400   # exactly 600s before now
-fail "cooldown exact boundary (not yet)" should_retry_after_user_wake 2 10000
-last_user_wake_reset_at=9399   # 601s before now
-pass "cooldown just elapsed" should_retry_after_user_wake 2 10000
+fail "4. cooldown exact boundary (not yet)" should_retry_after_user_wake 2 10000
 
-# --- Test 5: empty HID idle (ioreg failed) ---
+# --- Test 5: cooldown just elapsed ---
+# Expected: retry fires at 601s.
+prev_hid_idle=3600
+last_user_wake_reset_at=9399   # 601s before now
+pass "5. cooldown just elapsed" should_retry_after_user_wake 2 10000
+
+# --- Test 6: empty HID idle (ioreg failed) ---
 # Expected: no retry (caller must treat unknown as "don't act").
 prev_hid_idle=3600
 last_user_wake_reset_at=0
-fail "empty hid_idle yields no retry" should_retry_after_user_wake "" 10000
+fail "6. empty hid_idle yields no retry" should_retry_after_user_wake "" 10000
 
-# --- Test 6: user opened lid but hasn't clicked yet (still idle) ---
+# --- Test 7: user opened lid but hasn't clicked yet (still idle) ---
 # Expected: no retry (current idle > BACK threshold).
 prev_hid_idle=3600
 last_user_wake_reset_at=0
-fail "lid opened but no click yet" should_retry_after_user_wake 30 10000
+fail "7. lid opened but no click yet" should_retry_after_user_wake 30 10000
 
-# --- Test 7: AWAY threshold is strict (>, not >=) ---
+# --- Test 8: AWAY threshold is strict (>, not >=) ---
 # Expected: prev=60 exactly should not trigger.
 prev_hid_idle=60
 last_user_wake_reset_at=0
-fail "AWAY boundary exact (not yet)" should_retry_after_user_wake 2 10000
-prev_hid_idle=61
-pass "AWAY boundary +1" should_retry_after_user_wake 2 10000
+fail "8. AWAY boundary exact (not yet)" should_retry_after_user_wake 2 10000
 
-# --- Test 8: BACK threshold is strict (<, not <=) ---
+# --- Test 9: AWAY threshold one past boundary ---
+# Expected: prev=61 does trigger.
+prev_hid_idle=61
+last_user_wake_reset_at=0
+pass "9. AWAY boundary +1" should_retry_after_user_wake 2 10000
+
+# --- Test 10: BACK threshold is strict (<, not <=) ---
 # Expected: current=10 exactly should not trigger.
 prev_hid_idle=3600
 last_user_wake_reset_at=0
-fail "BACK boundary exact (not yet)" should_retry_after_user_wake 10 10000
-pass "BACK boundary -1" should_retry_after_user_wake 9 10000
+fail "10. BACK boundary exact (not yet)" should_retry_after_user_wake 10 10000
 
-# --- Test 9: first-ever wake (last_user_wake_reset_at=0) ---
+# --- Test 11: BACK threshold one below boundary ---
+# Expected: current=9 does trigger.
+prev_hid_idle=3600
+last_user_wake_reset_at=0
+pass "11. BACK boundary -1" should_retry_after_user_wake 9 10000
+
+# --- Test 12: first-ever reset (last_user_wake_reset_at=0) ---
 # Expected: cooldown treats 0 as "never reset" and allows retry as long as
 # now_poll > USER_WAKE_RESET_COOLDOWN.
 prev_hid_idle=3600
 last_user_wake_reset_at=0
-pass "first reset from zero" should_retry_after_user_wake 2 601
+pass "12. first reset from zero" should_retry_after_user_wake 2 601
 
 print -- ""
 if (( failures > 0 )); then
