@@ -39,7 +39,7 @@ fresh_epoch() {
 
 # --- Config ----------------------------------------------------------------
 readonly IFACE="en6"
-readonly LOG="/var/log/ethernet-monitor.log"
+readonly LOG="${ETHMON_LOG:-/var/log/ethernet-monitor.log}"
 readonly CHECK_INTERVAL=3          # seconds between polls
 readonly SELF_HEAL_WAIT=10         # seconds to wait before intervening
 readonly RECOVERY_COOLDOWN=30      # min seconds between recovery attempts
@@ -49,6 +49,9 @@ readonly ROTATION_CHECK_INTERVAL=100  # check log size every N iterations (~5 mi
 readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was sleeping
 readonly BOOT_GRACE=120               # suppress first link-up notification for a never-seen adapter until uptime exceeds this (s)
 readonly WAKE_SETTLE=120              # suppress notifications + recovery after wake (s); must exceed max DarkWake duration
+readonly USER_WAKE_RESET_COOLDOWN=600 # min seconds between HID-wake recovery retries from gave-up state
+readonly HID_IDLE_AWAY_THRESHOLD=60   # prev HID idle must exceed this (s) to treat next activity as a "return"
+readonly HID_IDLE_BACK_THRESHOLD=10   # current HID idle must be under this (s) to treat as "user is back"
 
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin"
 
@@ -97,6 +100,8 @@ appeared_via_wake=false
 pending_notify_msg=""
 pending_notify_sound=""
 pending_is_good_news=true
+prev_hid_idle=0
+last_user_wake_reset_at=0
 boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*{ sec = \([0-9]*\).*/\1/p') || boot_sec=0
 # Ensure boot_sec is numeric; default to 0 if empty/non-numeric
 if [[ -z "$boot_sec" || ! "$boot_sec" =~ '^[0-9]+$' ]]; then
@@ -140,6 +145,33 @@ is_display_on() {
     # If we can't determine the power state, assume display is on
     [[ -z "$power_state" ]] && return 0
     (( power_state == 4 ))
+}
+
+# Seconds since the last HID (keyboard/mouse/trackpad) event.
+# Used to detect real user presence — distinct from DarkWake, which can occur
+# without any human interaction. Prints empty string on failure; callers must
+# tolerate it (treat as "unknown — don't act").
+get_hid_idle_seconds() {
+    ioreg -c IOHIDSystem -d 0 -w 0 2>/dev/null \
+        | awk '/HIDIdleTime/ { print int($NF / 1000000000); exit }'
+}
+
+# Decide whether to retry recovery from the gave-up state after detecting that
+# a user just returned to the machine. A "return" is defined as: HID was idle
+# for more than HID_IDLE_AWAY_THRESHOLD seconds, and current HID idle is under
+# HID_IDLE_BACK_THRESHOLD seconds. Additionally, USER_WAKE_RESET_COOLDOWN must
+# have elapsed since the previous retry to avoid repeated attempts.
+#
+# Arguments: $1 = current HID idle seconds (may be empty), $2 = current epoch
+# Reads globals: prev_hid_idle, last_user_wake_reset_at, HID_IDLE_*, USER_WAKE_*
+# Returns 0 (true) if retry should happen, 1 (false) otherwise.
+should_retry_after_user_wake() {
+    local cur_idle="$1" cur_time="$2"
+    [[ -z "$cur_idle" ]] && return 1
+    (( cur_idle < HID_IDLE_BACK_THRESHOLD )) || return 1
+    (( prev_hid_idle > HID_IDLE_AWAY_THRESHOLD )) || return 1
+    (( cur_time - last_user_wake_reset_at > USER_WAKE_RESET_COOLDOWN )) || return 1
+    return 0
 }
 
 # Check if the pending notification contradicts current iface state.
@@ -277,6 +309,13 @@ cleanup() {
 trap cleanup SIGTERM SIGINT
 
 # --- Startup validation -----------------------------------------------------
+# When the script is sourced from a test with ETHMON_NO_MAIN=1, skip the main
+# loop so the test can exercise individual functions. Running the script
+# normally (as a LaunchDaemon) leaves this variable unset and proceeds.
+if [[ "${ETHMON_NO_MAIN:-0}" == "1" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
 log_msg "Monitor started (PID $$, interface $IFACE, poll ${CHECK_INTERVAL}s)"
 
 # --- Main loop --------------------------------------------------------------
@@ -399,10 +438,25 @@ while true; do
         continue
     fi
 
-    # Already gave up — wait for state change (adapter replug or link return)
+    # Already gave up — wait for state change (adapter replug or link return).
+    # Exception: if the user was idle for a while and just became active again,
+    # assume they physically woke the laptop or returned to it. Give recovery
+    # one more shot — the earlier failures may have been during clamshell or
+    # DarkWake, and a fresh banner now will actually be visible.
     if (( recovery_failures >= MAX_RECOVERY_ATTEMPTS )); then
-        sleep "$CHECK_INTERVAL"
-        continue
+        hid_idle=$(get_hid_idle_seconds)
+        if should_retry_after_user_wake "$hid_idle" "$now_poll"; then
+            log_msg "[USER WAKE] HID idle ${hid_idle}s (prev ${prev_hid_idle}s) — retrying recovery from gave-up state"
+            recovery_failures=0
+            last_recovery_at=0
+            last_user_wake_reset_at=$now_poll
+            prev_hid_idle=$hid_idle
+            # fall through to the normal link-down handling below
+        else
+            [[ -n "$hid_idle" ]] && prev_hid_idle=$hid_idle
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
     fi
 
     # Adapter re-appeared after wake but link was never active in this adapter
