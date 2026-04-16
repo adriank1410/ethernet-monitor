@@ -307,25 +307,12 @@ cleanup() {
     exit 0
 }
 
-# --- Startup validation -----------------------------------------------------
-# When the script is sourced from a test with ETHMON_NO_MAIN=1, bail out before
-# installing signal traps or starting the main loop so the test can exercise
-# individual functions without mutating the caller's shell. We only honour the
-# env var when the file is actually being sourced (ZSH_EVAL_CONTEXT contains
-# "file") — otherwise, treat an accidental production env var as a footgun and
-# log a warning instead of silently disabling monitoring.
-if [[ "${ETHMON_NO_MAIN:-0}" == "1" ]]; then
-    if [[ "${ZSH_EVAL_CONTEXT:-}" == *file* ]]; then
-        return 0
-    fi
-    log_msg "[WARN] ETHMON_NO_MAIN=1 ignored during normal execution; continuing startup"
-fi
-
-trap cleanup SIGTERM SIGINT
-log_msg "Monitor started (PID $$, interface $IFACE, poll ${CHECK_INTERVAL}s)"
-
-# --- Main loop --------------------------------------------------------------
-while true; do
+# --- Main loop iteration ----------------------------------------------------
+# Single iteration of the polling logic. Returns 0 always; each early "skip"
+# (what used to be `continue` in the while loop) is now `return 0`. Extracted
+# so integration tests can drive the state machine directly by calling this
+# function with mocked external-command wrappers.
+run_iteration() {
     if (( ++rotation_counter >= ROTATION_CHECK_INTERVAL )); then
         rotation_counter=0
         rotate_log
@@ -370,7 +357,7 @@ while true; do
             first_link_up=false
         fi
         sleep "$CHECK_INTERVAL"
-        continue
+        return 0
     fi
 
     # --- Adapter is present ---
@@ -410,12 +397,12 @@ while true; do
             log_msg "[ADAPTER] $IFACE appeared, waiting ${SELF_HEAL_WAIT}s for link negotiation..."
         fi
         interruptible_sleep "$SELF_HEAL_WAIT"
-        if check_mid_loop_wake; then continue; fi
+        if check_mid_loop_wake; then return 0; fi
 
         iface_output=$(get_iface_status)
         if [[ -z "$iface_output" ]]; then
             adapter_was_present=false
-            continue
+            return 0
         fi
     fi
 
@@ -433,7 +420,7 @@ while true; do
             recovery_failures=0
         fi
         sleep "$CHECK_INTERVAL"
-        continue
+        return 0
     fi
 
     # --- Link is down, adapter is present ---
@@ -441,7 +428,7 @@ while true; do
     # During wake settle, skip all link-down handling — just poll
     if (( now_poll > 0 && now_poll < wake_settle_until )); then
         sleep "$CHECK_INTERVAL"
-        continue
+        return 0
     fi
 
     # Already gave up — wait for state change (adapter replug or link return).
@@ -461,7 +448,7 @@ while true; do
         else
             [[ -n "$hid_idle" ]] && prev_hid_idle=$hid_idle
             sleep "$CHECK_INTERVAL"
-            continue
+            return 0
         fi
     fi
 
@@ -470,7 +457,7 @@ while true; do
     # recovery that will always fail and produce a spurious notification.
     if [[ "$appeared_via_wake" == true && "$link_ever_active" == false ]]; then
         sleep "$CHECK_INTERVAL"
-        continue
+        return 0
     fi
 
     if [[ "$link_was_active" == true ]]; then
@@ -480,19 +467,19 @@ while true; do
         link_was_active=false
 
         interruptible_sleep "$SELF_HEAL_WAIT"
-        if check_mid_loop_wake; then continue; fi
+        if check_mid_loop_wake; then return 0; fi
 
         iface_output=$(get_iface_status)
         if [[ -z "$iface_output" ]]; then
             # Adapter disappeared during self-heal wait — let next iteration handle it
-            continue
+            return 0
         fi
         if [[ "$iface_output" == *"status: active"* ]]; then
             log_msg "[SELF-HEALED] Link recovered on its own after ${SELF_HEAL_WAIT}s"
             notify "$MSG_SELF_HEALED" "Glass"
             link_was_active=true
             recovery_failures=0
-            continue
+            return 0
         fi
     fi
 
@@ -501,11 +488,35 @@ while true; do
     # and ifconfig calls during DarkWake cannot succeed.
     if ! is_display_on; then
         sleep "$CHECK_INTERVAL"
-        continue
+        return 0
     fi
     if attempt_recovery; then
         link_was_active=true
     fi
 
     sleep "$CHECK_INTERVAL"
+    return 0
+}
+
+# --- Startup validation -----------------------------------------------------
+# When the script is sourced from a test with ETHMON_NO_MAIN=1, bail out before
+# installing signal traps or starting the main loop so the test can exercise
+# individual functions (run_iteration, should_retry_after_user_wake) without
+# mutating the caller's shell. We only honour the env var when the file is
+# actually being sourced (ZSH_EVAL_CONTEXT contains "file") — otherwise, treat
+# an accidental production env var as a footgun and log a warning instead of
+# silently disabling monitoring.
+if [[ "${ETHMON_NO_MAIN:-0}" == "1" ]]; then
+    if [[ "${ZSH_EVAL_CONTEXT:-}" == *file* ]]; then
+        return 0
+    fi
+    log_msg "[WARN] ETHMON_NO_MAIN=1 ignored during normal execution; continuing startup"
+fi
+
+trap cleanup SIGTERM SIGINT
+log_msg "Monitor started (PID $$, interface $IFACE, poll ${CHECK_INTERVAL}s)"
+
+# --- Main loop --------------------------------------------------------------
+while true; do
+    run_iteration
 done
