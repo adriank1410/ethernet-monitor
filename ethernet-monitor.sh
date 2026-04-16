@@ -458,8 +458,7 @@ run_iteration() {
         fi
         local prev_hid_poll_at=$last_hid_poll_at
         last_hid_poll_at=$now_poll
-        local hid_idle
-        hid_idle=$(get_hid_idle_seconds)
+        local hid_idle=$(get_hid_idle_seconds)
         if should_retry_after_user_wake "$hid_idle" "$now_poll" "$prev_hid_poll_at"; then
             log_msg "[USER WAKE] HID idle ${hid_idle}s (prev ${prev_hid_idle}s) — retrying recovery from gave-up state"
             recovery_failures=0
