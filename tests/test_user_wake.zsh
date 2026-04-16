@@ -28,14 +28,14 @@ pass() {
         print -- "PASS  $name"
     else
         print -- "FAIL  $name (expected success, got failure)"
-        (( failures++ ))
+        (( ++failures ))
     fi
 }
 fail() {
     local name="$1"; shift
     if "$@"; then
         print -- "FAIL  $name (expected failure, got success)"
-        (( failures++ ))
+        (( ++failures ))
     else
         print -- "PASS  $name"
     fi
@@ -47,7 +47,7 @@ fail() {
 #   USER_WAKE_RESET_COOLDOWN=600
 # Tests below are written against those exact values.
 
-# Each numbered test below runs a single assertion. Thirteen tests total,
+# Each numbered test below runs a single assertion. Nineteen tests total,
 # matching the count in the PR description.
 
 # --- Test 1: user was idle for an hour, just clicked a key ---
@@ -131,6 +131,59 @@ pass "12. first reset from zero" should_retry_after_user_wake 2 601
 prev_hid_idle=0
 last_user_wake_reset_at=0
 fail "13. fresh gave-up with reset prev=0" should_retry_after_user_wake 1 10000
+
+# --- Test 14: HID event between polls (cur_idle >= BACK, but < poll delta) ---
+# Scenario from the HID-throttling incident: poll at t=9970 saw user away
+# (prev=3600), user clicked at t=9975, went idle. At t=10000 the next poll sees
+# cur_idle=25 — above BACK threshold (10), but below the 30s poll delta. The
+# old single-check (cur_idle < BACK) missed this; the since-poll path catches
+# it. Expected: retry fires.
+prev_hid_idle=3600
+last_user_wake_reset_at=0
+pass "14. activity since previous poll triggers retry" \
+    should_retry_after_user_wake 25 10000 9970
+
+# --- Test 15: since-poll boundary is strict (<, not <=) ---
+# Activity exactly at prev_poll_at means HIDIdleTime == poll delta — not newer.
+# Expected: no retry (without this, we'd retrigger on stale timing).
+prev_hid_idle=3600
+last_user_wake_reset_at=0
+fail "15. since-poll boundary exact (not yet)" \
+    should_retry_after_user_wake 30 10000 9970
+
+# --- Test 16: since-poll trigger still respects cooldown ---
+# Even with fresh activity since the last poll, USER_WAKE_RESET_COOLDOWN blocks
+# retries within 600s of the previous one.
+prev_hid_idle=3600
+last_user_wake_reset_at=9500   # 500s ago, cooldown is 600s
+fail "16. since-poll respects cooldown" \
+    should_retry_after_user_wake 25 10000 9970
+
+# --- Test 17: since-poll trigger still requires AWAY state ---
+# If prev_hid_idle never crossed AWAY (user was continuously active), a fresh
+# HID event between polls should not count as "returning".
+prev_hid_idle=2
+last_user_wake_reset_at=0
+fail "17. since-poll requires prev AWAY" \
+    should_retry_after_user_wake 25 10000 9970
+
+# --- Test 18: prev_poll_at=0 disables the since-poll check ---
+# First-ever poll in gave-up state has no prior timestamp. Passing 0 must not
+# spuriously trigger — we must still see cur_idle < BACK.
+prev_hid_idle=3600
+last_user_wake_reset_at=0
+fail "18. prev_poll_at=0 disables since-poll path" \
+    should_retry_after_user_wake 25 10000 0
+
+# --- Test 19: regression — the exact missed-wake scenario from review ---
+# Reviewer's trace: poll at t=1000 (user away, idle=65), user activity at
+# t=1005, next poll at t=1030 with idle=25 and prev_hid_idle=65. Before the
+# fix, recovery_failures stayed at 2 because idle=25 failed the BACK check and
+# prev kept drifting upward. Expected: retry fires via since-poll path.
+prev_hid_idle=65
+last_user_wake_reset_at=0
+pass "19. reviewer's missed-wake trace now triggers" \
+    should_retry_after_user_wake 25 1030 1000
 
 print -- ""
 if (( failures > 0 )); then

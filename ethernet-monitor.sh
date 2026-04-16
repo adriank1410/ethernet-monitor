@@ -160,20 +160,30 @@ get_hid_idle_seconds() {
 
 # Decide whether to retry recovery from the gave-up state after detecting that
 # a user just returned to the machine. A "return" is defined as: HID was idle
-# for more than HID_IDLE_AWAY_THRESHOLD seconds, and current HID idle is under
-# HID_IDLE_BACK_THRESHOLD seconds. Additionally, USER_WAKE_RESET_COOLDOWN must
-# have elapsed since the previous retry to avoid repeated attempts.
+# for more than HID_IDLE_AWAY_THRESHOLD seconds, and EITHER current HID idle is
+# under HID_IDLE_BACK_THRESHOLD seconds OR an HID event occurred since the
+# previous poll (cur_idle < cur_time - prev_poll_at). The since-poll check
+# matters because HID polling is throttled to HID_POLL_MIN_INTERVAL — without
+# it, a user who clicked mid-window and went idle again before the next poll
+# would be missed permanently (cur_idle would exceed HID_IDLE_BACK_THRESHOLD
+# and prev_hid_idle would never reach AWAY again). Additionally,
+# USER_WAKE_RESET_COOLDOWN must have elapsed since the previous retry.
 #
-# Arguments: $1 = current HID idle seconds (may be empty), $2 = current epoch
+# Arguments: $1 = current HID idle seconds (may be empty), $2 = current epoch,
+# $3 = previous HID poll epoch (optional; 0 disables the since-poll check).
 # Reads globals: prev_hid_idle, last_user_wake_reset_at, HID_IDLE_*, USER_WAKE_*
 # Returns 0 (true) if retry should happen, 1 (false) otherwise.
 should_retry_after_user_wake() {
-    local cur_idle="$1" cur_time="$2"
+    local cur_idle="$1" cur_time="$2" prev_poll_at="${3:-0}"
     [[ -z "$cur_idle" ]] && return 1
-    (( cur_idle < HID_IDLE_BACK_THRESHOLD )) || return 1
     (( prev_hid_idle > HID_IDLE_AWAY_THRESHOLD )) || return 1
     (( cur_time - last_user_wake_reset_at > USER_WAKE_RESET_COOLDOWN )) || return 1
-    return 0
+    (( cur_idle < HID_IDLE_BACK_THRESHOLD )) && return 0
+    if (( prev_poll_at > 0 )); then
+        local since_prev=$(( cur_time - prev_poll_at ))
+        (( since_prev > 0 && cur_idle < since_prev )) && return 0
+    fi
+    return 1
 }
 
 # Check if the pending notification contradicts current iface state.
@@ -295,7 +305,7 @@ attempt_recovery() {
 
     (( recovery_failures++ ))
     if (( recovery_failures >= MAX_RECOVERY_ATTEMPTS )); then
-        log_msg "[GAVE UP] Auto-recovery failed ${MAX_RECOVERY_ATTEMPTS}x — stopping retries until link or adapter changes"
+        log_msg "[GAVE UP] Auto-recovery failed ${MAX_RECOVERY_ATTEMPTS}x — stopping retries until link, adapter, or user wake"
         notify "$MSG_GAVE_UP" "Basso"
         prev_hid_idle=0
     else
@@ -444,10 +454,11 @@ run_iteration() {
             sleep "$CHECK_INTERVAL"
             return 0
         fi
+        local prev_hid_poll_at=$last_hid_poll_at
         last_hid_poll_at=$now_poll
         local hid_idle
         hid_idle=$(get_hid_idle_seconds)
-        if should_retry_after_user_wake "$hid_idle" "$now_poll"; then
+        if should_retry_after_user_wake "$hid_idle" "$now_poll" "$prev_hid_poll_at"; then
             log_msg "[USER WAKE] HID idle ${hid_idle}s (prev ${prev_hid_idle}s) — retrying recovery from gave-up state"
             recovery_failures=0
             last_recovery_at=0
