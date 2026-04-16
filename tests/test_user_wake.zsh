@@ -47,7 +47,7 @@ fail() {
 #   USER_WAKE_RESET_COOLDOWN=600
 # Tests below are written against those exact values.
 
-# Each numbered test below runs a single assertion. Twelve tests total,
+# Each numbered test below runs a single assertion. Thirteen tests total,
 # matching the count in the PR description.
 
 # --- Test 1: user was idle for an hour, just clicked a key ---
