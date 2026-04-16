@@ -81,6 +81,7 @@ attempt_recovery() {
     if (( recovery_failures >= MAX_RECOVERY_ATTEMPTS )); then
         log_msg "[GAVE UP] Auto-recovery failed ${MAX_RECOVERY_ATTEMPTS}x — stopping retries until link or adapter changes"
         notify "$MSG_GAVE_UP" "Basso"
+        prev_hid_idle=0
     else
         log_msg "[FAILED] Recovery attempt $recovery_failures/$MAX_RECOVERY_ATTEMPTS failed"
     fi
@@ -125,20 +126,21 @@ assert_log_contains "phase 3 — second recovery fails, GAVE UP" "[GAVE UP]"
 assert_log_contains "phase 3 — GAVE UP notification attempted" "[NOTIFY-DELIVERED]"
 
 # --- Phase 4: user still absent, no retry during idle iterations ---
-# prev_hid_idle starts at 0; each iteration in the gave-up block updates it.
-# For user-wake to trigger, current must be <10 AND prev >60 AND cooldown OK.
-# While user stays away (current high), no trigger fires.
-MOCK_TIME=1050; MOCK_HID_IDLE=80;  run_iteration
-MOCK_TIME=1055; MOCK_HID_IDLE=100; run_iteration
-MOCK_TIME=1060; MOCK_HID_IDLE=150; run_iteration
+# prev_hid_idle was reset to 0 by the GAVE UP handler. Each HID poll in the
+# gave-up block updates it. HID_POLL_MIN_INTERVAL=30s throttles ioreg calls,
+# so time deltas must be ≥30s (while staying <WAKE_THRESHOLD=60s to avoid
+# false wake detection). While user stays away (current HID high), no trigger.
+MOCK_TIME=1080; MOCK_HID_IDLE=80;  run_iteration  # prev=0→80
+MOCK_TIME=1115; MOCK_HID_IDLE=100; run_iteration  # prev=80→100
+MOCK_TIME=1150; MOCK_HID_IDLE=150; run_iteration  # prev=100→150
 assert_log_not_contains "phase 4 — no premature [USER WAKE] while away" "[USER WAKE]"
 
 # --- Phase 5: user returns and types → [USER WAKE] + successful retry ---
 # prev_hid_idle is now 150 (from phase 4), current drops to 1 → trigger.
 # Cooldown check: USER_WAKE_RESET_COOLDOWN=600, last_user_wake_reset_at=0,
-# now=1065 → 1065-0=1065 > 600 → cooldown OK. Delta from phase 4 is 5s,
-# well under WAKE_THRESHOLD=60, so no spurious wake detection.
-MOCK_TIME=1065
+# now=1185 → 1185-0=1185 > 600 → cooldown OK. Delta from phase 4 is 35s:
+# above HID_POLL_MIN_INTERVAL (30), below WAKE_THRESHOLD (60).
+MOCK_TIME=1185
 MOCK_HID_IDLE=1
 MOCK_RECOVERY_RESULT=success
 run_iteration

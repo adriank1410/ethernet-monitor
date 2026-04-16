@@ -52,6 +52,7 @@ readonly WAKE_SETTLE=120              # suppress notifications + recovery after 
 readonly USER_WAKE_RESET_COOLDOWN=600 # min seconds between HID-wake recovery retries from gave-up state
 readonly HID_IDLE_AWAY_THRESHOLD=60   # prev HID idle must exceed this (s) to treat next activity as a "return"
 readonly HID_IDLE_BACK_THRESHOLD=10   # current HID idle must be under this (s) to treat as "user is back"
+readonly HID_POLL_MIN_INTERVAL=30     # min seconds between ioreg HID polls in gave-up state (save CPU)
 
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin"
 
@@ -102,6 +103,7 @@ pending_notify_sound=""
 pending_is_good_news=true
 prev_hid_idle=0
 last_user_wake_reset_at=0
+last_hid_poll_at=0
 boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*{ sec = \([0-9]*\).*/\1/p') || boot_sec=0
 # Ensure boot_sec is numeric; default to 0 if empty/non-numeric
 if [[ -z "$boot_sec" || ! "$boot_sec" =~ '^[0-9]+$' ]]; then
@@ -295,6 +297,7 @@ attempt_recovery() {
     if (( recovery_failures >= MAX_RECOVERY_ATTEMPTS )); then
         log_msg "[GAVE UP] Auto-recovery failed ${MAX_RECOVERY_ATTEMPTS}x — stopping retries until link or adapter changes"
         notify "$MSG_GAVE_UP" "Basso"
+        prev_hid_idle=0
     else
         log_msg "[FAILED] Recovery attempt $recovery_failures/$MAX_RECOVERY_ATTEMPTS failed"
     fi
@@ -437,6 +440,11 @@ run_iteration() {
     # one more shot — the earlier failures may have been during clamshell or
     # DarkWake, and a fresh banner now will actually be visible.
     if (( recovery_failures >= MAX_RECOVERY_ATTEMPTS )); then
+        if (( now_poll - last_hid_poll_at < HID_POLL_MIN_INTERVAL )); then
+            sleep "$CHECK_INTERVAL"
+            return 0
+        fi
+        last_hid_poll_at=$now_poll
         local hid_idle
         hid_idle=$(get_hid_idle_seconds)
         if should_retry_after_user_wake "$hid_idle" "$now_poll"; then

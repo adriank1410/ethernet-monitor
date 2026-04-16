@@ -123,6 +123,15 @@ prev_hid_idle=3600
 last_user_wake_reset_at=0
 pass "12. first reset from zero" should_retry_after_user_wake 2 601
 
+# --- Test 13: prev_hid_idle=0 after GAVE UP reset prevents false trigger ---
+# If prev_hid_idle is properly reset to 0 on entering gave-up, a user who was
+# active the whole time (current idle=1) should NOT trigger — because prev (0)
+# is not > AWAY (60). Without the reset, a stale prev from a prior gave-up
+# session could cause a false positive.
+prev_hid_idle=0
+last_user_wake_reset_at=0
+fail "13. fresh gave-up with reset prev=0" should_retry_after_user_wake 1 10000
+
 print -- ""
 if (( failures > 0 )); then
     print -- "$failures test(s) FAILED"
