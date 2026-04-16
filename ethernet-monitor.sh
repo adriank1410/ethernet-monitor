@@ -365,6 +365,7 @@ run_iteration() {
             first_link_up=false
             pending_notify_msg=""
             pending_notify_sound=""
+            prev_hid_idle=0
         elif (( now_poll > 0 && boot_sec > 0 && now_poll - boot_sec > BOOT_GRACE )); then
             # System uptime beyond BOOT_GRACE without ever seeing adapter — not early boot
             first_link_up=false
@@ -431,6 +432,7 @@ run_iteration() {
             link_ever_active=true
             appeared_via_wake=false
             recovery_failures=0
+            prev_hid_idle=0
         fi
         sleep "$CHECK_INTERVAL"
         return 0
@@ -466,7 +468,15 @@ run_iteration() {
             prev_hid_idle=$hid_idle
             # fall through to the normal link-down handling below
         else
-            [[ -n "$hid_idle" ]] && prev_hid_idle=$hid_idle
+            # If hid_idle is unknown (ioreg failed), reset prev_hid_idle to 0
+            # so a later valid sample can't be paired with a stale away value
+            # — preserves the "unknown → don't act" contract of
+            # should_retry_after_user_wake even across transient ioreg errors.
+            if [[ -n "$hid_idle" ]]; then
+                prev_hid_idle=$hid_idle
+            else
+                prev_hid_idle=0
+            fi
             sleep "$CHECK_INTERVAL"
             return 0
         fi

@@ -202,6 +202,38 @@ else
     print -- "FAIL  phase 6 — expected wake_settle_until > $MOCK_TIME, got $wake_settle_until"
     (( ++failures ))
 fi
+# Phase 6 also re-enters the LINK UP branch (adapter re-appeared after wake,
+# link reports active). That branch now resets prev_hid_idle, which guards
+# against the "stale away sample across link events" edge case flagged by
+# review feedback.
+if (( prev_hid_idle == 0 )); then
+    print -- "PASS  phase 6 — prev_hid_idle reset to 0 on LINK UP branch"
+else
+    print -- "FAIL  phase 6 — expected prev_hid_idle=0 after LINK UP, got $prev_hid_idle"
+    (( ++failures ))
+fi
+
+# --- Phase 7: ioreg failure in gave-up block invalidates prev_hid_idle ----
+# Manually force a gave-up state with a non-zero prev_hid_idle, then return
+# an empty HID sample from get_hid_idle_seconds. Before the fix, the else
+# branch left prev_hid_idle unchanged, so a subsequent valid low reading
+# could pair with the stale away value and fire a spurious USER WAKE. Fix:
+# when ioreg is unknown, reset prev_hid_idle to 0.
+wake_settle_until=0
+last_poll_at=1500
+last_hid_poll_at=1400
+recovery_failures=2
+prev_hid_idle=150
+MOCK_TIME=1510
+MOCK_HID_IDLE=""
+set_iface_status "status: inactive"
+run_iteration
+if (( prev_hid_idle == 0 )); then
+    print -- "PASS  phase 7 — empty hid_idle resets prev_hid_idle to 0"
+else
+    print -- "FAIL  phase 7 — expected prev_hid_idle=0, got $prev_hid_idle"
+    (( ++failures ))
+fi
 
 # --- Regression counts ----------------------------------------------------
 # The whole point of the fix: the gap between GAVE UP and a physical replug
