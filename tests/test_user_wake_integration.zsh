@@ -149,7 +149,7 @@ assert_log_contains "phase 5 — retry succeeds" "[RECOVERED] ifconfig reset wor
 # --- Regression check: before the fix this sequence had no [USER WAKE] ---
 # The whole point of the fix: the gap between GAVE UP and physical replug
 # (18h in the real incident) now contains a recovery retry path.
-retry_count=$(grep -c "\[RECOVERY\]" "$log_file")
+retry_count=$(grep -c "\[RECOVERY\]" "$log_file" || true)
 if (( retry_count >= 3 )); then
     print -- "PASS  regression — recovery was attempted $retry_count times total (≥3)"
 else
@@ -157,8 +157,8 @@ else
     (( failures++ ))
 fi
 
-gave_up_count=$(grep -c "\[GAVE UP\]" "$log_file")
-user_wake_count=$(grep -c "\[USER WAKE\]" "$log_file")
+gave_up_count=$(grep -c "\[GAVE UP\]" "$log_file" || true)
+user_wake_count=$(grep -c "\[USER WAKE\]" "$log_file" || true)
 if (( gave_up_count == 1 && user_wake_count == 1 )); then
     print -- "PASS  regression — exactly one [GAVE UP] followed by one [USER WAKE]"
 else

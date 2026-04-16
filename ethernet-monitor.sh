@@ -437,6 +437,7 @@ run_iteration() {
     # one more shot — the earlier failures may have been during clamshell or
     # DarkWake, and a fresh banner now will actually be visible.
     if (( recovery_failures >= MAX_RECOVERY_ATTEMPTS )); then
+        local hid_idle
         hid_idle=$(get_hid_idle_seconds)
         if should_retry_after_user_wake "$hid_idle" "$now_poll"; then
             log_msg "[USER WAKE] HID idle ${hid_idle}s (prev ${prev_hid_idle}s) — retrying recovery from gave-up state"
@@ -501,8 +502,9 @@ run_iteration() {
 # --- Startup validation -----------------------------------------------------
 # When the script is sourced from a test with ETHMON_NO_MAIN=1, bail out before
 # installing signal traps or starting the main loop so the test can exercise
-# individual functions (run_iteration, should_retry_after_user_wake) without
-# mutating the caller's shell. We only honour the env var when the file is
+# individual functions (run_iteration, should_retry_after_user_wake). Sourcing
+# still performs the setup above (setopt, globals, PATH); this guard only skips
+# traps and the monitor loop. We only honour the env var when the file is
 # actually being sourced (ZSH_EVAL_CONTEXT contains "file") — otherwise, treat
 # an accidental production env var as a footgun and log a warning instead of
 # silently disabling monitoring.
