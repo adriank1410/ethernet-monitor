@@ -39,7 +39,7 @@ fresh_epoch() {
 
 # --- Config ----------------------------------------------------------------
 readonly IFACE="en6"
-readonly LOG="/var/log/ethernet-monitor.log"
+readonly LOG="${ETHMON_LOG:-/var/log/ethernet-monitor.log}"
 readonly CHECK_INTERVAL=3          # seconds between polls
 readonly SELF_HEAL_WAIT=10         # seconds to wait before intervening
 readonly RECOVERY_COOLDOWN=30      # min seconds between recovery attempts
@@ -49,6 +49,10 @@ readonly ROTATION_CHECK_INTERVAL=100  # check log size every N iterations (~5 mi
 readonly WAKE_THRESHOLD=60            # time gap (s) that indicates system was sleeping
 readonly BOOT_GRACE=120               # suppress first link-up notification for a never-seen adapter until uptime exceeds this (s)
 readonly WAKE_SETTLE=120              # suppress notifications + recovery after wake (s); must exceed max DarkWake duration
+readonly USER_WAKE_RESET_COOLDOWN=600 # min seconds between HID-wake recovery retries from gave-up state
+readonly HID_IDLE_AWAY_THRESHOLD=60   # prev HID idle must exceed this (s) to treat next activity as a "return"
+readonly HID_IDLE_BACK_THRESHOLD=10   # current HID idle must be under this (s) to treat as "user is back"
+readonly HID_POLL_MIN_INTERVAL=30     # min seconds between ioreg HID polls in gave-up state (save CPU)
 
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin"
 
@@ -97,6 +101,9 @@ appeared_via_wake=false
 pending_notify_msg=""
 pending_notify_sound=""
 pending_is_good_news=true
+prev_hid_idle=0
+last_user_wake_reset_at=0
+last_hid_poll_at=0
 boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*{ sec = \([0-9]*\).*/\1/p') || boot_sec=0
 # Ensure boot_sec is numeric; default to 0 if empty/non-numeric
 if [[ -z "$boot_sec" || ! "$boot_sec" =~ '^[0-9]+$' ]]; then
@@ -140,6 +147,43 @@ is_display_on() {
     # If we can't determine the power state, assume display is on
     [[ -z "$power_state" ]] && return 0
     (( power_state == 4 ))
+}
+
+# Seconds since the last HID (keyboard/mouse/trackpad) event.
+# Used to detect real user presence — distinct from DarkWake, which can occur
+# without any human interaction. Prints empty string on failure; callers must
+# tolerate it (treat as "unknown — don't act").
+get_hid_idle_seconds() {
+    ioreg -c IOHIDSystem -d 0 -w 0 2>/dev/null \
+        | awk '/HIDIdleTime/ { print int($NF / 1000000000); exit }'
+}
+
+# Decide whether to retry recovery from the gave-up state after detecting that
+# a user just returned to the machine. A "return" is defined as: HID was idle
+# for more than HID_IDLE_AWAY_THRESHOLD seconds, and EITHER current HID idle is
+# under HID_IDLE_BACK_THRESHOLD seconds OR an HID event occurred since the
+# previous poll (cur_idle < cur_time - prev_poll_at). The since-poll check
+# matters because HID polling is throttled to HID_POLL_MIN_INTERVAL — without
+# it, a user who clicked mid-window and went idle again before the next poll
+# would be missed permanently (cur_idle would exceed HID_IDLE_BACK_THRESHOLD
+# and prev_hid_idle would never reach AWAY again). Additionally,
+# USER_WAKE_RESET_COOLDOWN must have elapsed since the previous retry.
+#
+# Arguments: $1 = current HID idle seconds (may be empty), $2 = current epoch,
+# $3 = previous HID poll epoch (optional; 0 disables the since-poll check).
+# Reads globals: prev_hid_idle, last_user_wake_reset_at, HID_IDLE_*, USER_WAKE_*
+# Returns 0 (true) if retry should happen, 1 (false) otherwise.
+should_retry_after_user_wake() {
+    local cur_idle="$1" cur_time="$2" prev_poll_at="${3:-0}"
+    [[ -z "$cur_idle" ]] && return 1
+    (( prev_hid_idle > HID_IDLE_AWAY_THRESHOLD )) || return 1
+    (( cur_time - last_user_wake_reset_at > USER_WAKE_RESET_COOLDOWN )) || return 1
+    (( cur_idle < HID_IDLE_BACK_THRESHOLD )) && return 0
+    if (( prev_poll_at > 0 )); then
+        local since_prev=$(( cur_time - prev_poll_at ))
+        (( since_prev > 0 && cur_idle < since_prev )) && return 0
+    fi
+    return 1
 }
 
 # Check if the pending notification contradicts current iface state.
@@ -261,8 +305,9 @@ attempt_recovery() {
 
     (( recovery_failures++ ))
     if (( recovery_failures >= MAX_RECOVERY_ATTEMPTS )); then
-        log_msg "[GAVE UP] Auto-recovery failed ${MAX_RECOVERY_ATTEMPTS}x — stopping retries until link or adapter changes"
+        log_msg "[GAVE UP] Auto-recovery failed ${MAX_RECOVERY_ATTEMPTS}x — stopping retries until link, adapter, or user wake"
         notify "$MSG_GAVE_UP" "Basso"
+        prev_hid_idle=0
     else
         log_msg "[FAILED] Recovery attempt $recovery_failures/$MAX_RECOVERY_ATTEMPTS failed"
     fi
@@ -274,13 +319,13 @@ cleanup() {
     log_msg "Monitor stopping (PID $$, signal received)"
     exit 0
 }
-trap cleanup SIGTERM SIGINT
 
-# --- Startup validation -----------------------------------------------------
-log_msg "Monitor started (PID $$, interface $IFACE, poll ${CHECK_INTERVAL}s)"
-
-# --- Main loop --------------------------------------------------------------
-while true; do
+# --- Main loop iteration ----------------------------------------------------
+# Single iteration of the polling logic. Returns 0 always; each early "skip"
+# (what used to be `continue` in the while loop) is now `return 0`. Extracted
+# so integration tests can drive the state machine directly by calling this
+# function with mocked external-command wrappers.
+run_iteration() {
     if (( ++rotation_counter >= ROTATION_CHECK_INTERVAL )); then
         rotation_counter=0
         rotate_log
@@ -320,12 +365,13 @@ while true; do
             first_link_up=false
             pending_notify_msg=""
             pending_notify_sound=""
+            prev_hid_idle=0
         elif (( now_poll > 0 && boot_sec > 0 && now_poll - boot_sec > BOOT_GRACE )); then
             # System uptime beyond BOOT_GRACE without ever seeing adapter — not early boot
             first_link_up=false
         fi
         sleep "$CHECK_INTERVAL"
-        continue
+        return 0
     fi
 
     # --- Adapter is present ---
@@ -365,12 +411,12 @@ while true; do
             log_msg "[ADAPTER] $IFACE appeared, waiting ${SELF_HEAL_WAIT}s for link negotiation..."
         fi
         interruptible_sleep "$SELF_HEAL_WAIT"
-        if check_mid_loop_wake; then continue; fi
+        if check_mid_loop_wake; then return 0; fi
 
         iface_output=$(get_iface_status)
         if [[ -z "$iface_output" ]]; then
             adapter_was_present=false
-            continue
+            return 0
         fi
     fi
 
@@ -386,9 +432,10 @@ while true; do
             link_ever_active=true
             appeared_via_wake=false
             recovery_failures=0
+            prev_hid_idle=0
         fi
         sleep "$CHECK_INTERVAL"
-        continue
+        return 0
     fi
 
     # --- Link is down, adapter is present ---
@@ -396,13 +443,42 @@ while true; do
     # During wake settle, skip all link-down handling — just poll
     if (( now_poll > 0 && now_poll < wake_settle_until )); then
         sleep "$CHECK_INTERVAL"
-        continue
+        return 0
     fi
 
-    # Already gave up — wait for state change (adapter replug or link return)
+    # Already gave up — wait for state change (adapter replug or link return).
+    # Exception: if the user was idle for a while and just became active again,
+    # assume they physically woke the laptop or returned to it. Give recovery
+    # one more shot — the earlier failures may have been during clamshell or
+    # DarkWake, and a fresh banner now will actually be visible.
     if (( recovery_failures >= MAX_RECOVERY_ATTEMPTS )); then
-        sleep "$CHECK_INTERVAL"
-        continue
+        if (( now_poll - last_hid_poll_at < HID_POLL_MIN_INTERVAL )); then
+            sleep "$CHECK_INTERVAL"
+            return 0
+        fi
+        local prev_hid_poll_at=$last_hid_poll_at
+        last_hid_poll_at=$now_poll
+        local hid_idle=$(get_hid_idle_seconds)
+        if should_retry_after_user_wake "$hid_idle" "$now_poll" "$prev_hid_poll_at"; then
+            log_msg "[USER WAKE] HID idle ${hid_idle}s (prev ${prev_hid_idle}s) — retrying recovery from gave-up state"
+            recovery_failures=0
+            last_recovery_at=0
+            last_user_wake_reset_at=$now_poll
+            prev_hid_idle=$hid_idle
+            # fall through to the normal link-down handling below
+        else
+            # If hid_idle is unknown (ioreg failed), reset prev_hid_idle to 0
+            # so a later valid sample can't be paired with a stale away value
+            # — preserves the "unknown → don't act" contract of
+            # should_retry_after_user_wake even across transient ioreg errors.
+            if [[ -n "$hid_idle" ]]; then
+                prev_hid_idle=$hid_idle
+            else
+                prev_hid_idle=0
+            fi
+            sleep "$CHECK_INTERVAL"
+            return 0
+        fi
     fi
 
     # Adapter re-appeared after wake but link was never active in this adapter
@@ -410,7 +486,7 @@ while true; do
     # recovery that will always fail and produce a spurious notification.
     if [[ "$appeared_via_wake" == true && "$link_ever_active" == false ]]; then
         sleep "$CHECK_INTERVAL"
-        continue
+        return 0
     fi
 
     if [[ "$link_was_active" == true ]]; then
@@ -420,19 +496,19 @@ while true; do
         link_was_active=false
 
         interruptible_sleep "$SELF_HEAL_WAIT"
-        if check_mid_loop_wake; then continue; fi
+        if check_mid_loop_wake; then return 0; fi
 
         iface_output=$(get_iface_status)
         if [[ -z "$iface_output" ]]; then
             # Adapter disappeared during self-heal wait — let next iteration handle it
-            continue
+            return 0
         fi
         if [[ "$iface_output" == *"status: active"* ]]; then
             log_msg "[SELF-HEALED] Link recovered on its own after ${SELF_HEAL_WAIT}s"
             notify "$MSG_SELF_HEALED" "Glass"
             link_was_active=true
             recovery_failures=0
-            continue
+            return 0
         fi
     fi
 
@@ -441,11 +517,36 @@ while true; do
     # and ifconfig calls during DarkWake cannot succeed.
     if ! is_display_on; then
         sleep "$CHECK_INTERVAL"
-        continue
+        return 0
     fi
     if attempt_recovery; then
         link_was_active=true
     fi
 
     sleep "$CHECK_INTERVAL"
+    return 0
+}
+
+# --- Startup validation -----------------------------------------------------
+# When the script is sourced from a test with ETHMON_NO_MAIN=1, bail out before
+# installing signal traps or starting the main loop so the test can exercise
+# individual functions (run_iteration, should_retry_after_user_wake). Sourcing
+# still performs the setup above (setopt, globals, PATH); this guard only skips
+# traps and the monitor loop. We only honour the env var when the file is
+# actually being sourced (ZSH_EVAL_CONTEXT contains "file") — otherwise, treat
+# an accidental production env var as a footgun and log a warning instead of
+# silently disabling monitoring.
+if [[ "${ETHMON_NO_MAIN:-0}" == "1" ]]; then
+    if [[ "${ZSH_EVAL_CONTEXT:-}" == *file* ]]; then
+        return 0
+    fi
+    log_msg "[WARN] ETHMON_NO_MAIN=1 ignored during normal execution; continuing startup"
+fi
+
+trap cleanup SIGTERM SIGINT
+log_msg "Monitor started (PID $$, interface $IFACE, poll ${CHECK_INTERVAL}s)"
+
+# --- Main loop --------------------------------------------------------------
+while true; do
+    run_iteration
 done
