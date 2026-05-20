@@ -6,7 +6,8 @@
 # Ethernet link drops, attempts recovery:
 #   1. Wait for self-heal (10s)
 #   2. ifconfig down/up
-#   3. Notify user to physically replug (then stop retrying)
+#   3. Notify user to physically replug (then retry only after link/adapter
+#      state changes or HID activity shows the user returned)
 #
 # Install:   sudo ./install.sh
 # Uninstall: sudo ./uninstall.sh
@@ -106,7 +107,7 @@ last_user_wake_reset_at=0
 last_hid_poll_at=0
 boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*{ sec = \([0-9]*\).*/\1/p') || boot_sec=0
 # Ensure boot_sec is numeric; default to 0 if empty/non-numeric
-if [[ -z "$boot_sec" || ! "$boot_sec" =~ '^[0-9]+$' ]]; then
+if [[ -z "$boot_sec" || ! "$boot_sec" =~ ^[0-9]+$ ]]; then
     boot_sec=0
 fi
 
@@ -205,13 +206,12 @@ _deliver_notify() {
     [[ -z "$console_uid" || "$console_uid" == "0" ]] && return
 
     local output
-    output=$(launchctl asuser "$console_uid" /usr/bin/osascript - "$msg" "$sound" <<'APPLESCRIPT' 2>&1
+    if ! output=$(launchctl asuser "$console_uid" /usr/bin/osascript - "$msg" "$sound" <<'APPLESCRIPT' 2>&1
 on run argv
     display notification (item 1 of argv) with title "Ethernet Monitor" sound name (item 2 of argv)
 end run
 APPLESCRIPT
-    )
-    if [[ $? -ne 0 ]]; then
+    ); then
         log_msg "[WARN] Notification failed: ${output:0:200}"
     fi
 }
@@ -380,6 +380,7 @@ run_iteration() {
     # Only deliver "bad news" (link_down, gave_up) — good news is informational
     # and the user will see ethernet working without a notification.
     if [[ -n "$pending_notify_msg" ]]; then
+        local pending_now
         pending_now=$(fresh_epoch)
         if (( wake_settle_until == 0 || pending_now >= wake_settle_until )); then
             if is_display_on; then
@@ -458,7 +459,8 @@ run_iteration() {
         fi
         local prev_hid_poll_at=$last_hid_poll_at
         last_hid_poll_at=$now_poll
-        local hid_idle=$(get_hid_idle_seconds)
+        local hid_idle
+        hid_idle=$(get_hid_idle_seconds)
         if should_retry_after_user_wake "$hid_idle" "$now_poll" "$prev_hid_poll_at"; then
             log_msg "[USER WAKE] HID idle ${hid_idle}s (prev ${prev_hid_idle}s) — retrying recovery from gave-up state"
             recovery_failures=0
