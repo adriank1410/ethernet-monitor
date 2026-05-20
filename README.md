@@ -15,7 +15,7 @@ A lightweight daemon (~1.5 MB RAM, 0% CPU) that polls the `en6` interface every 
 1. **Detects link drops** — adapter present but no Ethernet link; gives up after 2 failed recovery attempts
 2. **Waits 10s for self-heal** — transient blips resolve themselves
 3. **Recovery** — `ifconfig down/up` to reset the link
-4. **Gives up after 2 failures** — no notification spam, resets on adapter replug
+4. **Gives up after 2 failures** — no notification spam; retries only after link return, adapter replug, or HID activity shows the user returned
 5. **Detects sleep/wake** — waits for link negotiation instead of false-alarming; skips recovery when the display is off (DarkWake/lid closed) and when the adapter reappears after wake without link history (no cable = stay passive)
 6. **macOS notifications** with sounds — localized to Polish or English based on system language
 
