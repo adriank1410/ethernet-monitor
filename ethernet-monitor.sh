@@ -57,19 +57,70 @@ readonly HID_POLL_MIN_INTERVAL=30     # min seconds between ioreg HID polls in g
 
 export PATH="/usr/sbin:/sbin:/usr/bin:/bin"
 
+# --- Small parsers -----------------------------------------------------------
+_extract_ioreg_int_property() {
+    local source_text="$1" property_name="$2" line
+    for line in ${(f)source_text}; do
+        if [[ "$line" =~ "\"${property_name}\"[[:space:]]*=[[:space:]]*([0-9]+)" ]]; then
+            print -r -- "$match[1]"
+            return 0
+        fi
+    done
+    return 1
+}
+
+_extract_hid_idle_seconds() {
+    local source_text="$1" idle_ns
+    idle_ns=$(_extract_ioreg_int_property "$source_text" "HIDIdleTime") || return 1
+    print -r -- $(( idle_ns / 1000000000 ))
+}
+
+_extract_console_uid() {
+    local source_text="$1" line
+    for line in ${(f)source_text}; do
+        [[ "$line" == *CGSSessionUniqueSessionUUID* ]] && continue
+        if [[ "$line" =~ "^[[:space:]]*UID[[:space:]]*:[[:space:]]*([0-9]+)" ]]; then
+            print -r -- "$match[1]"
+            return 0
+        fi
+    done
+    return 1
+}
+
+_first_apple_language() {
+    local source_text="$1" line
+    for line in ${(f)source_text}; do
+        if [[ "$line" =~ "\"([^\"]+)\"" ]]; then
+            print -r -- "$match[1]"
+            return 0
+        fi
+    done
+    return 1
+}
+
+_extract_boot_sec() {
+    local source_text="$1"
+    if [[ "$source_text" =~ "sec = ([0-9]+)" ]]; then
+        print -r -- "$match[1]"
+        return 0
+    fi
+    return 1
+}
+
 # --- Localization (PL/EN) ---------------------------------------------------
 # Override with ETHMON_LANG=pl or ETHMON_LANG=en in the plist EnvironmentVariables,
 # otherwise auto-detect from console user's system language.
 if [[ -z "${ETHMON_LANG:-}" ]]; then
-    # Same awk pattern as get_console_uid() — defined later, can't call yet at parse time
-    console_uid=$(scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null | awk '/CGSSessionUniqueSessionUUID/ { next } /^[[:space:]]*UID[[:space:]]*:/ { print $3 }' 2>/dev/null)
+    console_info=$(scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null) || console_info=""
+    console_uid=$(_extract_console_uid "$console_info") || console_uid=""
     ETHMON_LANG=""
     if [[ -n "${console_uid:-}" && "$console_uid" != "0" ]]; then
-        ETHMON_LANG=$(launchctl asuser "$console_uid" defaults read -g AppleLanguages 2>/dev/null \
-            | sed -n 's/.*"\(.*\)".*/\1/p' | head -1)
+        lang_output=$(launchctl asuser "$console_uid" defaults read -g AppleLanguages 2>/dev/null) || lang_output=""
+        ETHMON_LANG=$(_first_apple_language "$lang_output") || ETHMON_LANG=""
     fi
     if [[ -z "${ETHMON_LANG:-}" ]]; then
-        ETHMON_LANG=$(defaults read -g AppleLanguages 2>/dev/null | sed -n 's/.*"\(.*\)".*/\1/p' | head -1)
+        lang_output=$(defaults read -g AppleLanguages 2>/dev/null) || lang_output=""
+        ETHMON_LANG=$(_first_apple_language "$lang_output") || ETHMON_LANG=""
     fi
 fi
 if [[ "$ETHMON_LANG" == pl* ]]; then
@@ -105,7 +156,8 @@ pending_is_good_news=true
 prev_hid_idle=0
 last_user_wake_reset_at=0
 last_hid_poll_at=0
-boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*{ sec = \([0-9]*\).*/\1/p') || boot_sec=0
+boot_info=$(sysctl -n kern.boottime 2>/dev/null) || boot_info=""
+boot_sec=$(_extract_boot_sec "$boot_info") || boot_sec=0
 # Ensure boot_sec is numeric; default to 0 if empty/non-numeric
 if [[ -z "$boot_sec" || ! "$boot_sec" =~ ^[0-9]+$ ]]; then
     boot_sec=0
@@ -114,7 +166,14 @@ fi
 # --- Helpers ----------------------------------------------------------------
 log_msg() {
     local ts
-    ts=$(/bin/date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || ts="UNKNOWN_TIME"
+    if [[ "$_has_zsh_datetime" == true ]]; then
+        ts=$(strftime '%Y-%m-%d %H:%M:%S' "$EPOCHSECONDS" 2>/dev/null) || ts=""
+    else
+        ts=""
+    fi
+    if [[ -z "$ts" ]]; then
+        ts=$(/bin/date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || ts="UNKNOWN_TIME"
+    fi
     if ! printf '%s  %s\n' "$ts" "$1" >> "$LOG" 2>/dev/null; then
         printf '%s  LOG_WRITE_FAILED: %s\n' "$ts" "$1" >&2
     fi
@@ -133,8 +192,9 @@ rotate_log() {
 }
 
 get_console_uid() {
-    scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null \
-        | awk '/CGSSessionUniqueSessionUUID/ { next } /^[[:space:]]*UID[[:space:]]*:/ { print $3 }'
+    local console_info
+    console_info=$(scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null) || return
+    _extract_console_uid "$console_info"
 }
 
 # Returns 0 if the display is currently powered on, 1 if off.
@@ -144,7 +204,7 @@ is_display_on() {
     local ioreg_out power_state
     ioreg_out=$(ioreg -r -d 1 -w 0 -c IODisplayWrangler 2>/dev/null)
     [[ -z "$ioreg_out" ]] && return 0
-    power_state=$(echo "$ioreg_out" | sed -n 's/.*"CurrentPowerState" = \([0-9]*\).*/\1/p')
+    power_state=$(_extract_ioreg_int_property "$ioreg_out" "CurrentPowerState") || power_state=""
     # If we can't determine the power state, assume display is on
     [[ -z "$power_state" ]] && return 0
     (( power_state == 4 ))
@@ -155,8 +215,10 @@ is_display_on() {
 # without any human interaction. Prints empty string on failure; callers must
 # tolerate it (treat as "unknown — don't act").
 get_hid_idle_seconds() {
-    ioreg -c IOHIDSystem -d 0 -w 0 2>/dev/null \
-        | awk '/HIDIdleTime/ { print int($NF / 1000000000); exit }'
+    local ioreg_out hid_idle
+    ioreg_out=$(ioreg -r -d 1 -c IOHIDSystem -w 0 2>/dev/null) || ioreg_out=""
+    hid_idle=$(_extract_hid_idle_seconds "$ioreg_out") || hid_idle=""
+    print -r -- "$hid_idle"
 }
 
 # Decide whether to retry recovery from the gave-up state after detecting that
