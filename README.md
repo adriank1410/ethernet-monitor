@@ -102,6 +102,35 @@ Logs:
 - `/var/log/ethernet-monitor.log` — main log (auto-rotated at 1 MB by the daemon)
 - `/var/log/ethernet-monitor.err` — stderr (rotated by newsyslog at 1 MB, 1 backup)
 
+## Local verification (no installation)
+
+On macOS, run all tests from the repository root without `sudo`:
+
+```sh
+zsh -f -c 'for test_file in tests/test_*.zsh; do zsh -f "$test_file" || exit; done'
+```
+
+The command stops on the first failing suite. `-f` skips user startup files
+(the system `zshenv` still runs). To trace a failing integration scenario:
+
+```sh
+zsh -f -x tests/test_user_wake_integration.zsh
+```
+
+Tests source the monitor with `ETHMON_NO_MAIN=1` and temporary log files.
+The integration test drives the real polling iteration and recovery function,
+with a temporary `ifconfig` shim handling status queries and simulated resets.
+Time, display/HID readings, waits, notification delivery and log rotation are
+replaced in that test; it never resets a real interface or loads a service.
+Temporary logs and the shim are removed on exit. Sourcing still performs
+read-only boot-time and language discovery using macOS commands.
+
+These tests cover parsers, HID retry boundaries and a simulated recovery/wake
+sequence. They do not verify physical sleep/DarkWake, actual notifications,
+signal handling, installation or a real adapter reset. `ETHMON_NO_MAIN=1` only
+skips the loop when the monitor is **sourced**; executing the monitor directly
+still starts normal monitoring.
+
 ## License
 
 [MIT](LICENSE)
