@@ -17,8 +17,9 @@
 #   - check_mid_loop_wake() is NOT mocked. With fresh_epoch() stable within
 #     a single run_iteration() call (MOCK_TIME does not change mid-iter) and
 #     interruptible_sleep() a no-op, the real function naturally returns 1.
-#   - get_iface_status() reads link state from a file the ifconfig shim can
-#     rewrite mid-iteration. An in-process counter was tried first but fails:
+#   - The real get_iface_status() reads link state through the ifconfig shim,
+#     backed by a file that the shim can rewrite mid-iteration.
+#     An in-process counter was tried first but fails:
 #     get_iface_status runs inside command substitution, so any state written
 #     in the subshell is dropped. The file sidesteps that by making the state
 #     visible to every subshell.
@@ -33,7 +34,7 @@ log_file=$(mktemp -t ethmon-int.XXXXXX)
 shim_dir=$(mktemp -d -t ethmon-shim.XXXXXX)
 trap 'rm -rf "$log_file" "$shim_dir"' EXIT
 
-# Fake ifconfig on PATH. The get_iface_status mock reads link state from a
+# Fake ifconfig on PATH. The real get_iface_status reads link state from a
 # test-managed file (see below). When a "flip_pending" sentinel exists and
 # the shim is invoked with "up", it rewrites the state file to "status:
 # active" — simulating a successful recovery. This mirrors how production
@@ -46,6 +47,10 @@ flip_sentinel="$shim_dir/flip_pending"
 
 cat > "$shim_dir/ifconfig" <<SHIM
 #!/usr/bin/env zsh
+if (( \$# == 1 )); then
+    cat "$iface_state_file"
+    exit \$?
+fi
 if [[ "\$2" == "up" && -f "$flip_sentinel" ]]; then
     printf 'status: active\n' > "$iface_state_file"
     rm -f "$flip_sentinel"
@@ -103,10 +108,6 @@ arm_recovery_success() {
     touch "$flip_sentinel"
 }
 
-get_iface_status() {
-    cat "$iface_state_file" 2>/dev/null
-}
-
 get_hid_idle_seconds() { echo "$MOCK_HID_IDLE"; }
 is_display_on()        { [[ "$MOCK_DISPLAY_ON" == true ]]; }
 fresh_epoch()          { echo "$MOCK_TIME"; }
@@ -151,7 +152,7 @@ MOCK_TIME=1045
 MOCK_HID_IDLE=55
 run_iteration
 assert_log_contains "phase 3 — second recovery fails, GAVE UP" "[GAVE UP]"
-assert_log_contains "phase 3 — GAVE UP notification delivered" "[NOTIFY-DELIVERED]"
+assert_log_contains "phase 3 — GAVE UP notification delivered" "[NOTIFY-DELIVERED] $MSG_GAVE_UP"
 if (( prev_hid_idle == 0 )); then
     print -- "PASS  phase 3 — prev_hid_idle reset to 0 by real attempt_recovery"
 else
@@ -182,7 +183,13 @@ MOCK_HID_IDLE=25
 run_iteration
 assert_log_contains "phase 5 — between-poll return triggers [USER WAKE]" \
     "[USER WAKE] HID idle 25s (prev 150s)"
-assert_log_contains "phase 5 — retry attempt logged after reset" "[RECOVERY]"
+retry_count=$(grep -c "\[RECOVERY\]" "$log_file" || true)
+if (( retry_count == 3 )); then
+    print -- "PASS  phase 5 — exactly one retry after the two failed attempts"
+else
+    print -- "FAIL  phase 5 — expected 3 [RECOVERY] entries, got $retry_count"
+    (( ++failures ))
+fi
 assert_log_contains "phase 5 — retry succeeds" "[RECOVERED] ifconfig reset worked"
 
 # --- Phase 6: real wake detection via MOCK_TIME jump ---------------------
@@ -241,10 +248,10 @@ fi
 # there was no [USER WAKE] in this sequence. The since-poll fix keeps that
 # guarantee even when the user returns mid-throttle-window.
 retry_count=$(grep -c "\[RECOVERY\]" "$log_file" || true)
-if (( retry_count >= 3 )); then
-    print -- "PASS  regression — recovery was attempted $retry_count times total (≥3)"
+if (( retry_count == 3 )); then
+    print -- "PASS  regression — recovery was attempted exactly 3 times total"
 else
-    print -- "FAIL  regression — expected ≥3 [RECOVERY] entries, got $retry_count"
+    print -- "FAIL  regression — expected 3 [RECOVERY] entries, got $retry_count"
     (( ++failures ))
 fi
 
